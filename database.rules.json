@@ -1,0 +1,45 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "drone": {
+      "status": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.device === true"
+      },
+      "telemetry": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.device === true"
+      },
+      "sensors": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.device === true"
+      },
+      "mapping": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.device === true"
+      },
+      "system": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.device === true"
+      },
+      "camera": {
+        ".read": "auth != null",
+        ".write": "auth != null && (auth.token.device === true || (auth.token.operator === true && newData.child('configuredBy').val() === auth.uid))"
+      },
+      "commands": {
+        "request": {
+          ".read": "auth != null && (auth.token.device === true || auth.token.operator === true)",
+          "$commandId": {
+            ".write": "auth != null && auth.token.operator === true && !data.exists() && newData.child('issuedBy').val() === auth.uid",
+            ".validate": "newData.hasChildren(['id', 'command', 'issuedAt', 'expiresAt', 'issuedBy', 'source', 'status']) && newData.child('id').val() === $commandId && newData.child('source').val() === 'ground-station' && newData.child('status').val() === 'pending' && newData.child('issuedAt').val() <= now && newData.child('issuedAt').val() >= now - 30000 && newData.child('expiresAt').val() > now && newData.child('expiresAt').val() > newData.child('issuedAt').val() && newData.child('expiresAt').val() - newData.child('issuedAt').val() <= 15000 && (newData.child('command').val() === 'ARM' || newData.child('command').val() === 'DISARM' || newData.child('command').val() === 'HOLD' || newData.child('command').val() === 'LAND' || newData.child('command').val() === 'RETURN' || newData.child('command').val() === 'START_SCAN' || newData.child('command').val() === 'STOP_SCAN' || newData.child('command').val() === 'CAMERA_ON' || newData.child('command').val() === 'CAMERA_OFF')"
+          }
+        },
+        "response": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.token.device === true"
+        }
+      }
+    }
+  }
+}
