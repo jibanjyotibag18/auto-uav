@@ -13,6 +13,8 @@ Publish `status.updatedAt` as the companion heartbeat at least every 15 seconds.
 | `/drone/sensors` | ESP32 #1 | TF-Luna, GY-53, HMC5883L values and sensor health |
 | `/drone/mapping` | ESP32 #2 | Local-coordinate scan points and angles |
 | `/drone/planning` | Authenticated operator/companion | Live route target, waypoints, and mission planning values |
+| `/drone/mission/outgoing/{id}` | Authenticated operator | Mission JSON queued for the ESP32 gateway to fetch and relay |
+| `/drone/mission/status/{id}` | Authenticated operator/device | Mission delivery, gateway forwarding, and hardware acknowledgement status |
 | `/drone/camera` | ESP32-CAM/device; operator may configure URL | Camera connection and MJPEG URL |
 | `/drone/system` | Authenticated companion | Firmware and heartbeat information |
 | `/drone/commands/request/{id}` | Authenticated operator | Expiring, unique command request |
@@ -90,6 +92,30 @@ The browser writes one record:
   "status": "pending"
 }
 ```
+
+Mission transfer records follow the same Firebase path and are intended for the hardware gateway:
+
+```json
+{
+  "missionId": "mission-1794350000000",
+  "createdBy": "Firebase Auth UID",
+  "createdAt": 1794350000000,
+  "vehicle": "CrossFlight · 01",
+  "status": "queued",
+  "state": "pending-gateway",
+  "waypoints": [
+    { "id": "wp-1", "label": "WP1", "x": 0, "z": 0, "altitude": 2.0, "speed": 1.5, "holdSeconds": 0 },
+    { "id": "wp-2", "label": "WP2", "x": 2.8, "z": 1.7, "altitude": 2.5, "speed": 1.5, "holdSeconds": 0 }
+  ],
+  "route": [
+    { "x": 0, "z": 0, "altitude": 2.0 },
+    { "x": 2.8, "z": 1.7, "altitude": 2.5 }
+  ],
+  "metadata": { "generator": "northstar-ground-station", "mode": "mission-transfer", "updatedAt": 1794350000000 }
+}
+```
+
+The gateway/ESP32 #2 must poll `drone/mission/outgoing/{id}`, validate the mission payload, forward it to ESP32 #1, and then update `drone/mission/status/{id}` with `status`, `delivery`, `ack`, and `hardware` state. The website reads that status record and displays queue/forwarding/acknowledgement state for operators.
 
 Allowed commands are `ARM`, `DISARM`, `HOLD`, `LAND`, `RETURN`, `START_SCAN`, `STOP_SCAN`, `CAMERA_ON`, and `CAMERA_OFF`. `AUTO MISSION` is intentionally not accepted. The companion must:
 

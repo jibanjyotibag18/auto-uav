@@ -9,6 +9,7 @@ const emptyLiveData = {
   sensors: null,
   mapping: null,
   planning: null,
+  mission: null,
   camera: null,
   system: null,
 }
@@ -36,7 +37,7 @@ export function useDroneData(mode, user) {
     let active = true
     setFirebaseError('')
     const unsubscribers = []
-    const paths = ['status', 'telemetry', 'sensors', 'mapping', 'planning', 'camera', 'system']
+    const paths = ['status', 'telemetry', 'sensors', 'mapping', 'planning', 'mission', 'camera', 'system']
 
     unsubscribers.push(onValue(ref(database, '.info/connected'), (snapshot) => {
       if (active) setConnection(snapshot.val() === true ? 'online' : 'offline')

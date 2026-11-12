@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
@@ -260,22 +260,44 @@ export function LidarView({ data, isDemo, onStartScan, onStopScan, commandReady,
   </>
 }
 
-export function PlanningView({ isDemo, data, connection, user, onSavePlan }) {
-  const liveTarget = !isDemo && data?.planning?.target
-  const [target, setTarget] = useState(() => {
-    if (liveTarget && Number.isFinite(Number(liveTarget.x)) && Number.isFinite(Number(liveTarget.z))) {
-      return { x: Number(liveTarget.x), z: Number(liveTarget.z) }
-    }
-    return { x: 7, z: 6 }
-  })
+export function PlanningView({ isDemo, data, connection, user, onSavePlan, onSendMission }) {
+  const liveMission = data?.mission
+  const [waypoints, setWaypoints] = useState(() => [
+    { id: 'wp-1', label: 'WP1', x: 0, z: 0, altitude: 2, speed: 1.5, holdSeconds: 0 },
+    { id: 'wp-2', label: 'WP2', x: 2.8, z: 1.7, altitude: 2.5, speed: 1.5, holdSeconds: 0 },
+    { id: 'wp-3', label: 'WP3', x: 5.4, z: 4.2, altitude: 3, speed: 1.5, holdSeconds: 0 },
+  ])
+  const [draft, setDraft] = useState({ label: 'WP4', x: 7, z: 6, altitude: 2.8, speed: 1.4, holdSeconds: 0 })
+  const [editingId, setEditingId] = useState(null)
+  const [target, setTarget] = useState({ x: 7, z: 6 })
   const [recalculated, setRecalculated] = useState(false)
   const [routeRevision, setRouteRevision] = useState(0)
+  const [missionState, setMissionState] = useState('idle')
   const obstacles = [{ x: 2, z: 1.5, r: 0.9 }, { x: 4.1, z: 4.2, r: 1.05 }, { x: 6.3, z: 2, r: 0.8 }, { x: 1.8, z: 6.6, r: 0.65 }]
   const plan = useMemo(() => findRoute(target, obstacles), [target, routeRevision])
   const path = plan.path
   const width = 520
   const toSvg = (point) => ({ x: 28 + point.x / 10 * (width - 56), y: 28 + point.z / 10 * (width - 56) })
   const route = path.map(toSvg).map((point) => `${point.x},${point.y}`).join(' ')
+
+  useEffect(() => {
+    if (!liveMission || !Array.isArray(liveMission.waypoints) || liveMission.waypoints.length === 0) return
+    setWaypoints(liveMission.waypoints.map((waypoint, index) => ({
+      id: waypoint.id || `wp-${index + 1}`,
+      label: waypoint.label || `WP${index + 1}`,
+      x: Number(waypoint.x),
+      z: Number(waypoint.z),
+      altitude: Number(waypoint.altitude ?? 2),
+      speed: Number(waypoint.speed ?? 1.5),
+      holdSeconds: Number(waypoint.holdSeconds ?? 0),
+    })))
+  }, [liveMission])
+
+  useEffect(() => {
+    if (!waypoints.length) return
+    const lastWaypoint = waypoints[waypoints.length - 1]
+    setTarget({ x: Number(lastWaypoint.x), z: Number(lastWaypoint.z) })
+  }, [waypoints])
 
   useEffect(() => {
     if (isDemo || !user || connection !== 'online' || !onSavePlan) return
@@ -295,17 +317,6 @@ export function PlanningView({ isDemo, data, connection, user, onSavePlan }) {
     })()
   }, [isDemo, user, connection, onSavePlan, target, recalculated, routeRevision, path])
 
-  useEffect(() => {
-    if (isDemo || !data?.planning?.target) return
-    const nextTarget = { x: Number(data.planning.target.x), z: Number(data.planning.target.z) }
-    if (Number.isFinite(nextTarget.x) && Number.isFinite(nextTarget.z)) {
-      setTarget((current) => {
-        const sameTarget = Math.abs(current.x - nextTarget.x) < 0.05 && Math.abs(current.z - nextTarget.z) < 0.05
-        return sameTarget ? current : nextTarget
-      })
-    }
-  }, [isDemo, data?.planning?.target])
-
   const moveTarget = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const x = Math.max(0, Math.min(10, ((event.clientX - rect.left) / rect.width) * 10))
@@ -313,22 +324,72 @@ export function PlanningView({ isDemo, data, connection, user, onSavePlan }) {
     setTarget({ x: Number(x.toFixed(1)), z: Number(z.toFixed(1)) })
     setRecalculated(false)
   }
+
+  const addWaypoint = (event) => {
+    event.preventDefault()
+    const nextWaypoint = {
+      id: editingId || `wp-${Date.now()}`,
+      label: draft.label || `WP${waypoints.length + 1}`,
+      x: Number(draft.x),
+      z: Number(draft.z),
+      altitude: Number(draft.altitude || 2),
+      speed: Number(draft.speed || 1.5),
+      holdSeconds: Number(draft.holdSeconds || 0),
+    }
+    if (editingId) {
+      setWaypoints((current) => current.map((waypoint) => (waypoint.id === editingId ? nextWaypoint : waypoint)))
+      setEditingId(null)
+    } else {
+      setWaypoints((current) => [...current, nextWaypoint])
+    }
+    setDraft({ label: `WP${waypoints.length + 2}`, x: 7, z: 6, altitude: 2.8, speed: 1.5, holdSeconds: 0 })
+  }
+
+  const removeWaypoint = (id) => {
+    setWaypoints((current) => current.filter((waypoint) => waypoint.id !== id))
+    if (editingId === id) setEditingId(null)
+  }
+
+  const startEditing = (waypoint) => {
+    setEditingId(waypoint.id)
+    setDraft({ ...waypoint })
+  }
+
+  const sendMission = async () => {
+    if (typeof onSendMission !== 'function') return
+    setMissionState('sending')
+    try {
+      const missionPayload = {
+        missionId: `mission-${Date.now()}`,
+        waypoints,
+        route: waypoints.map((waypoint) => ({ x: Number(waypoint.x), z: Number(waypoint.z), altitude: Number(waypoint.altitude || 2) })),
+        target: { x: Number(target.x), z: Number(target.z) },
+      }
+      await onSendMission(missionPayload)
+      setMissionState('queued')
+    } catch (error) {
+      setMissionState(error?.message || 'failed')
+    }
+  }
+
+  const missionLiveStatus = isDemo ? 'DEMO MODE' : liveMission?.status || liveMission?.state || missionState || 'READY'
   return <>
-    <div className="page-title-row"><div><div className="eyebrow">LOCALIZATION / SIMULATION</div><h1>GPS-free path planning</h1><p>{isDemo ? 'Sandbox route planning on a local obstacle map. No vehicle commands are sent.' : 'Path values are synced to the live Firebase database for the current mission context.'}</p></div><span className="sim-tag"><MapPin size={14} /> {isDemo ? 'SIMULATION ONLY' : 'LIVE DB SYNC'}</span></div>
-    <div className="safety-banner"><LockKeyhole size={18} /><div><strong>{isDemo ? 'Real autonomous navigation is disabled' : 'Live planning data is synced to Firebase'}</strong><span>{isDemo ? 'This planner is a 2D local simulation and is not connected to the flight controller.' : 'The target and route data are written to the hardware/database path for the companion and mission layer.'}</span></div></div>
+    <div className="page-title-row"><div><div className="eyebrow">MISSION / WAYPOINTS</div><h1>Mission planner</h1><p>{isDemo ? 'Route planning sandbox only. Real hardware delivery stays disabled in demo mode.' : 'Plan a route, publish it to Firebase, and send it to the ESP32 gateway.'}</p></div><span className="sim-tag"><MapPin size={14} /> {isDemo ? 'SIMULATION ONLY' : 'DATABASE LINKED'}</span></div>
+    <div className="safety-banner"><LockKeyhole size={18} /><div><strong>{isDemo ? 'Mission transfer is disabled in demo mode' : 'Mission transfer is active through Firebase'}</strong><span>{isDemo ? 'This planner does not send data to hardware until live mode is enabled.' : 'Generated waypoint missions are written to the live database and are available for ESP32 #2 to fetch.'}</span></div></div>
     <div className="planning-layout"><Panel title="Local obstacle map" action={<button className="text-button" onClick={() => { setTarget({ x: 7, z: 6 }); setRecalculated(false) }}>Reset scene <RefreshCw size={13} /></button>}>
-      <div className="map-instructions">Click map to place a target. Route automatically skirts obstacles.</div>
+      <div className="map-instructions">Click map to place a target. Waypoints are converted into a mission payload and published to the live hardware path.</div>
       <svg className="planning-map" viewBox={`0 0 ${width} ${width}`} role="button" aria-label="Click to place simulated target" onClick={moveTarget}>
         <defs><pattern id="grid" width="46.4" height="46.4" patternUnits="userSpaceOnUse"><path d="M 46.4 0 L 0 0 0 46.4" fill="none" stroke="#1c2b3c" strokeWidth="1" /></pattern></defs>
         <rect x="0" y="0" width={width} height={width} fill="url(#grid)" />
         {obstacles.map((obstacle, index) => { const p = toSvg(obstacle); return <g key={index}><circle cx={p.x} cy={p.y} r={obstacle.r / 10 * (width - 56)} fill="#ff63721a" stroke="#ff6372" strokeDasharray="4 4" /><circle cx={p.x} cy={p.y} r="4" fill="#ff6372" /></g> })}
         <polyline points={route} fill="none" stroke="#51c5ff" strokeWidth="3" strokeDasharray="8 5" />
-        {path.slice(1, -1).map((point, index) => { const p = toSvg(point); return <circle key={index} cx={p.x} cy={p.y} r="3" fill="#51c5ff" /> })}
+        {waypoints.map((waypoint, index) => { const p = toSvg({ x: waypoint.x, z: waypoint.z }); return <g key={waypoint.id}><circle cx={p.x} cy={p.y} r="5" fill={index === 0 ? '#52d9a1' : '#51c5ff'} /><text x={p.x + 9} y={p.y + 4} fill="#dfeaf8" fontSize="10">{waypoint.label}</text></g> })}
         {(() => { const p = toSvg({ x: 0, z: 0 }); return <g><circle cx={p.x} cy={p.y} r="10" fill="#52d9a1" /><path d={`M ${p.x - 6} ${p.y} l 6 -6 l 6 6 l -6 6 z`} fill="#0b111c" /><text x={p.x + 14} y={p.y + 4} fill="#b9c9dc" fontSize="11">START</text></g> })()}
         {(() => { const p = toSvg(target); return <g><circle cx={p.x} cy={p.y} r="10" fill="#51c5ff" /><circle cx={p.x} cy={p.y} r="4" fill="#0b111c" /><text x={p.x + 14} y={p.y + 4} fill="#b9c9dc" fontSize="11">TARGET</text></g> })()}
-        </svg>
-      <div className="map-legend"><span><i className="legend-dot green" /> Start</span><span><i className="legend-dot blue" /> Proposed route</span><span><i className="legend-dot red" /> Obstacle</span></div>
-      </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Simulation limits"><p className="subtle-copy">{isDemo ? 'This example planner uses a local 2D grid and illustrative obstacle avoidance. It does not consume live sensor data or send AUTO MISSION commands.' : 'The route is mirrored into the live database and can be consumed by the companion or mission layer after validation.'}</p><div className="boundary-status"><span>REAL DRONE LINK</span><b>{isDemo ? 'NONE' : connection === 'online' ? 'FIREBASE' : 'OFFLINE'}</b></div></Panel></div></div>
+      </svg>
+      <div className="map-legend"><span><i className="legend-dot green" /> Start</span><span><i className="legend-dot blue" /> Mission waypoints</span><span><i className="legend-dot red" /> Obstacle</span></div>
+      </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Mission status"><div className="parameter-list"><div><span>STATUS</span><b>{missionLiveStatus}</b></div><div><span>GATEWAY</span><b>{isDemo ? 'SIMULATED' : connection === 'online' ? 'CONNECTED' : 'OFFLINE'}</b></div><div><span>WAYPOINTS</span><b>{waypoints.length}</b></div><div><span>LAST UPDATE</span><b>{formatAge(liveMission?.updatedAt || liveMission?.createdAt)}</b></div></div><button className="button button-primary full-button" disabled={isDemo || !user || connection !== 'online' || missionState === 'sending'} onClick={sendMission}><Radio size={15} /> {missionState === 'sending' ? 'Sending...' : 'Send Mission to Hardware'}</button></Panel><Panel title="Live hardware data"><div className="parameter-list"><div><span>ESP32 #2</span><b>{data?.status?.mappingController?.connected && connection === 'online' ? 'ONLINE' : 'OFFLINE'}</b></div><div><span>LiDAR</span><b>{valueOrDash((data?.sensors?.tfLuna?.healthy === true && isFresh(data?.sensors?.tfLuna?.updatedAt)) ? data?.sensors?.tfLuna?.distance : null, 2)} m</b></div><div><span>MAX RANGE</span><b>{valueOrDash((data?.mapping?.points?.length ? Math.max(...data.mapping.points.map((point) => Number(point.distance || Math.hypot(point.x, point.z)))) : null), 2)} m</b></div><div><span>SCAN ANGLE</span><b>{valueOrDash(data?.mapping?.horizontalAngle)}°</b></div><div><span>MISSION STATE</span><b>{liveMission?.status || 'WAITING'}</b></div></div></Panel></div></div>
+    <div className="planning-layout" style={{ marginTop: 14 }}><Panel title="Waypoint editor"><form className="inline-form" onSubmit={addWaypoint}><div className="input-row"><input type="text" value={draft.label} onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Waypoint label" /><input type="number" step="0.1" value={draft.x} onChange={(event) => setDraft((current) => ({ ...current, x: event.target.value }))} placeholder="X" /><input type="number" step="0.1" value={draft.z} onChange={(event) => setDraft((current) => ({ ...current, z: event.target.value }))} placeholder="Z" /><input type="number" step="0.1" value={draft.altitude} onChange={(event) => setDraft((current) => ({ ...current, altitude: event.target.value }))} placeholder="Alt" /></div><div className="input-row"><input type="number" step="0.1" value={draft.speed} onChange={(event) => setDraft((current) => ({ ...current, speed: event.target.value }))} placeholder="Speed" /><input type="number" step="1" value={draft.holdSeconds} onChange={(event) => setDraft((current) => ({ ...current, holdSeconds: event.target.value }))} placeholder="Hold (s)" /><button className="button button-primary" type="submit">{editingId ? 'Save waypoint' : 'Add waypoint'}</button></div></form><div className="status-list" style={{ marginTop: 12 }}>{waypoints.map((waypoint, index) => <div className="status-row" key={waypoint.id}><span><MapPin size={15} /> {waypoint.label || `WP${index + 1}`} · ({Number(waypoint.x).toFixed(1)}, {Number(waypoint.z).toFixed(1)}) m</span><div style={{ display: 'flex', gap: 8 }}><button className="text-button" onClick={() => startEditing(waypoint)}>Edit</button><button className="text-button" onClick={() => removeWaypoint(waypoint.id)}>Delete</button></div></div>)}</div></Panel><Panel title="Command history"><div className="status-list"><div className="status-row"><span><Signal size={15} /> Mission queued</span><strong>{missionLiveStatus}</strong></div><div className="status-row"><span><Wifi size={15} /> Delivery</span><strong>{isDemo ? 'SIMULATED' : liveMission?.delivery || 'PENDING'}</strong></div><div className="status-row"><span><Shield size={15} /> Hardware ACK</span><strong>{isDemo ? 'SIMULATED' : liveMission?.ack || 'PENDING'}</strong></div><div className="status-row"><span><Activity size={15} /> Last sync</span><strong>{formatAge(liveMission?.updatedAt || liveMission?.createdAt)}</strong></div></div></Panel></div>
   </>
 }
 

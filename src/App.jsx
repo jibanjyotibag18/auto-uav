@@ -176,6 +176,56 @@ export default function App() {
     addLog(setLogs, 'SENT', 'Route plan synced', `Target (${Number(plan.target?.x).toFixed(1)}, ${Number(plan.target?.z).toFixed(1)}) m`, 'GROUND STATION')
   }
 
+  const sendMissionToHardware = async (mission) => {
+    if (isDemo) throw new Error('Live Firebase mode is required to send a mission to the hardware gateway.')
+    if (!database || !user || connection !== 'online') throw new Error('Authenticated Firebase connection required before mission transfer.')
+    if (!Array.isArray(mission?.waypoints) || mission.waypoints.length === 0) {
+      throw new Error('Add at least one waypoint before sending the mission.')
+    }
+
+    const missionId = mission.missionId || `mission-${Date.now()}`
+    const payload = {
+      missionId,
+      createdBy: user.uid,
+      createdAt: Date.now(),
+      vehicle: 'CrossFlight · 01',
+      status: 'queued',
+      state: 'pending-gateway',
+      waypoints: mission.waypoints.map((waypoint, index) => ({
+        id: waypoint.id || `wp-${index + 1}`,
+        label: waypoint.label || `WP${index + 1}`,
+        x: Number(waypoint.x),
+        z: Number(waypoint.z),
+        altitude: Number(waypoint.altitude ?? 2),
+        speed: Number(waypoint.speed ?? 1.5),
+        holdSeconds: Number(waypoint.holdSeconds ?? 0),
+      })),
+      route: mission.route || mission.waypoints.map((waypoint) => ({ x: Number(waypoint.x), z: Number(waypoint.z) })),
+      metadata: {
+        generator: 'northstar-ground-station',
+        mode: 'mission-transfer',
+        updatedAt: Date.now(),
+      },
+    }
+
+    await update(ref(database, `drone/mission/outgoing/${missionId}`), payload)
+    await update(ref(database, `drone/mission/status/${missionId}`), {
+      missionId,
+      status: 'queued',
+      state: 'pending-gateway',
+      updatedAt: Date.now(),
+      message: 'Mission queued to gateway.',
+      delivery: 'queued',
+      ack: 'pending',
+      gateway: 'pending',
+      hardware: 'pending',
+    })
+
+    addLog(setLogs, 'SENT', 'Mission queued to hardware', `Mission ID ${missionId} is pending gateway forwarding.`, 'GROUND STATION')
+    notify(`Mission ${missionId} queued for hardware delivery.`, 'success')
+    return { missionId, ...payload }
+  }
+
   const signIn = async (email, password) => {
     if (!auth) throw new Error('Firebase is not configured. Set the VITE_FIREBASE_* values in .env.local.')
     await signInWithEmailAndPassword(auth, email, password)
@@ -218,7 +268,7 @@ export default function App() {
         {page === 'mission' && <MissionControl data={data} connection={connection} isDemo={isDemo} user={user} onCommand={handleCommand} pending={pending} />}
         {page === 'camera' && <CameraView camera={data.camera} isDemo={isDemo} connection={connection} user={user} onCameraUrl={saveCameraUrl} />}
         {page === 'lidar' && <LidarView data={data} isDemo={isDemo} commandReady={Boolean(user && connection === 'online' && data.status?.companion?.connected === true && isFresh(data.status?.updatedAt))} onStartScan={() => handleCommand({ command: 'START_SCAN', label: 'Start scan' })} onStopScan={() => handleCommand({ command: 'STOP_SCAN', label: 'Stop scan' })} onClear={() => !isDemo && addLog(setLogs, 'DATA', 'Map view cleared', 'Cleared local view only; sensor data was not modified.', 'GROUND STATION')} />}
-        {page === 'planning' && <PlanningView isDemo={isDemo} data={data} connection={connection} user={user} onSavePlan={savePlanningData} />}
+        {page === 'planning' && <PlanningView isDemo={isDemo} data={data} connection={connection} user={user} onSavePlan={savePlanningData} onSendMission={sendMissionToHardware} />}
         {page === 'sensors' && <SensorsView data={data} isDemo={isDemo} />}
         {page === 'telemetry' && <TelemetryView data={data} isDemo={isDemo} />}
         {page === 'logs' && <LogsView logs={logs} isDemo={isDemo} onClear={() => setLogs([])} />}

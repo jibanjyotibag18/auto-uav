@@ -23,6 +23,22 @@
         ".read": "auth != null",
         ".write": "auth != null && auth.token.operator === true"
       },
+      "mission": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.operator === true",
+        "outgoing": {
+          "$missionId": {
+            ".write": "auth != null && auth.token.operator === true && !data.exists()",
+            ".validate": "newData.hasChildren(['missionId', 'createdBy', 'createdAt', 'vehicle', 'status', 'waypoints'])"
+          }
+        },
+        "status": {
+          "$missionId": {
+            ".write": "auth != null && (auth.token.operator === true || auth.token.device === true)",
+            ".validate": "newData.hasChildren(['missionId', 'status', 'updatedAt'])"
+          }
+        }
+      },
       "system": {
         ".read": "auth != null",
         ".write": "auth != null && auth.token.device === true"
