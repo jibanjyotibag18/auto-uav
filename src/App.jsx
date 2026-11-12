@@ -160,6 +160,22 @@ export default function App() {
     addLog(setLogs, 'SENT', 'Camera URL updated', url, 'GROUND STATION')
   }
 
+  const savePlanningData = async (plan) => {
+    if (isDemo) return
+    if (!database || !user || connection !== 'online') throw new Error('Authenticated Firebase connection required to sync the route plan.')
+    const payload = {
+      target: plan.target,
+      obstacles: plan.obstacles,
+      route: plan.route,
+      recalculated: Boolean(plan.recalculated),
+      routeRevision: Number(plan.routeRevision || 0),
+      updatedAt: Date.now(),
+      updatedBy: user.uid,
+    }
+    await update(ref(database, 'drone/planning'), payload)
+    addLog(setLogs, 'SENT', 'Route plan synced', `Target (${Number(plan.target?.x).toFixed(1)}, ${Number(plan.target?.z).toFixed(1)}) m`, 'GROUND STATION')
+  }
+
   const signIn = async (email, password) => {
     if (!auth) throw new Error('Firebase is not configured. Set the VITE_FIREBASE_* values in .env.local.')
     await signInWithEmailAndPassword(auth, email, password)
@@ -202,7 +218,7 @@ export default function App() {
         {page === 'mission' && <MissionControl data={data} connection={connection} isDemo={isDemo} user={user} onCommand={handleCommand} pending={pending} />}
         {page === 'camera' && <CameraView camera={data.camera} isDemo={isDemo} connection={connection} user={user} onCameraUrl={saveCameraUrl} />}
         {page === 'lidar' && <LidarView data={data} isDemo={isDemo} commandReady={Boolean(user && connection === 'online' && data.status?.companion?.connected === true && isFresh(data.status?.updatedAt))} onStartScan={() => handleCommand({ command: 'START_SCAN', label: 'Start scan' })} onStopScan={() => handleCommand({ command: 'STOP_SCAN', label: 'Stop scan' })} onClear={() => !isDemo && addLog(setLogs, 'DATA', 'Map view cleared', 'Cleared local view only; sensor data was not modified.', 'GROUND STATION')} />}
-        {page === 'planning' && <PlanningView isDemo={isDemo} />}
+        {page === 'planning' && <PlanningView isDemo={isDemo} data={data} connection={connection} user={user} onSavePlan={savePlanningData} />}
         {page === 'sensors' && <SensorsView data={data} isDemo={isDemo} />}
         {page === 'telemetry' && <TelemetryView data={data} isDemo={isDemo} />}
         {page === 'logs' && <LogsView logs={logs} isDemo={isDemo} onClear={() => setLogs([])} />}

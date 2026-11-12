@@ -12,6 +12,7 @@ Publish `status.updatedAt` as the companion heartbeat at least every 15 seconds.
 | `/drone/telemetry` | Authenticated companion | FC telemetry actually reported by the FC |
 | `/drone/sensors` | ESP32 #1 | TF-Luna, GY-53, HMC5883L values and sensor health |
 | `/drone/mapping` | ESP32 #2 | Local-coordinate scan points and angles |
+| `/drone/planning` | Authenticated operator/companion | Live route target, waypoints, and mission planning values |
 | `/drone/camera` | ESP32-CAM/device; operator may configure URL | Camera connection and MJPEG URL |
 | `/drone/system` | Authenticated companion | Firmware and heartbeat information |
 | `/drone/commands/request/{id}` | Authenticated operator | Expiring, unique command request |

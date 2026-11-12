@@ -19,6 +19,10 @@
         ".read": "auth != null",
         ".write": "auth != null && auth.token.device === true"
       },
+      "planning": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.token.operator === true"
+      },
       "system": {
         ".read": "auth != null",
         ".write": "auth != null && auth.token.device === true"

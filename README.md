@@ -25,7 +25,7 @@ For browser development only, `.env.local` is read by Vite on startup; restart t
 
 ## Data and command contract
 
-The app listens at `/drone/{status,telemetry,sensors,mapping,camera,system}`. Expected payload shapes, units, timing, and command acknowledgement requirements are documented in [docs/ESP32_API.md](./docs/ESP32_API.md).
+The app listens at `/drone/{status,telemetry,sensors,mapping,planning,camera,system}`. Expected payload shapes, units, timing, and command acknowledgement requirements are documented in [docs/ESP32_API.md](./docs/ESP32_API.md). The route-planning view syncs the current target and route into `/drone/planning` while the browser is in live Firebase mode.
 
 Command requests are written to `/drone/commands/request/{uniqueId}` with an issuing UID and a 15-second expiry. A companion must check the ID has not previously been processed, check expiry immediately before acting, validate command preconditions, and report the resulting **flight-controller feedback** at `/drone/commands/response/{uniqueId}`. A successful Firebase write is only a queued request; it is not evidence that the flight controller accepted or completed it.
 

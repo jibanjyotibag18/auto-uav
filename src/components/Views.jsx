@@ -260,8 +260,14 @@ export function LidarView({ data, isDemo, onStartScan, onStopScan, commandReady,
   </>
 }
 
-export function PlanningView({ isDemo }) {
-  const [target, setTarget] = useState({ x: 7, z: 6 })
+export function PlanningView({ isDemo, data, connection, user, onSavePlan }) {
+  const liveTarget = !isDemo && data?.planning?.target
+  const [target, setTarget] = useState(() => {
+    if (liveTarget && Number.isFinite(Number(liveTarget.x)) && Number.isFinite(Number(liveTarget.z))) {
+      return { x: Number(liveTarget.x), z: Number(liveTarget.z) }
+    }
+    return { x: 7, z: 6 }
+  })
   const [recalculated, setRecalculated] = useState(false)
   const [routeRevision, setRouteRevision] = useState(0)
   const obstacles = [{ x: 2, z: 1.5, r: 0.9 }, { x: 4.1, z: 4.2, r: 1.05 }, { x: 6.3, z: 2, r: 0.8 }, { x: 1.8, z: 6.6, r: 0.65 }]
@@ -270,6 +276,36 @@ export function PlanningView({ isDemo }) {
   const width = 520
   const toSvg = (point) => ({ x: 28 + point.x / 10 * (width - 56), y: 28 + point.z / 10 * (width - 56) })
   const route = path.map(toSvg).map((point) => `${point.x},${point.y}`).join(' ')
+
+  useEffect(() => {
+    if (isDemo || !user || connection !== 'online' || !onSavePlan) return
+    const planPayload = {
+      target,
+      obstacles,
+      route: path.map((point) => ({ x: Number(point.x), z: Number(point.z) })),
+      recalculated,
+      routeRevision,
+    }
+    void (async () => {
+      try {
+        await onSavePlan(planPayload)
+      } catch (error) {
+        // Intentionally ignore sync failures; logs are surfaced elsewhere.
+      }
+    })()
+  }, [isDemo, user, connection, onSavePlan, target, recalculated, routeRevision, path])
+
+  useEffect(() => {
+    if (isDemo || !data?.planning?.target) return
+    const nextTarget = { x: Number(data.planning.target.x), z: Number(data.planning.target.z) }
+    if (Number.isFinite(nextTarget.x) && Number.isFinite(nextTarget.z)) {
+      setTarget((current) => {
+        const sameTarget = Math.abs(current.x - nextTarget.x) < 0.05 && Math.abs(current.z - nextTarget.z) < 0.05
+        return sameTarget ? current : nextTarget
+      })
+    }
+  }, [isDemo, data?.planning?.target])
+
   const moveTarget = (event) => {
     const rect = event.currentTarget.getBoundingClientRect()
     const x = Math.max(0, Math.min(10, ((event.clientX - rect.left) / rect.width) * 10))
@@ -278,8 +314,8 @@ export function PlanningView({ isDemo }) {
     setRecalculated(false)
   }
   return <>
-    <div className="page-title-row"><div><div className="eyebrow">LOCALIZATION / SIMULATION</div><h1>GPS-free path planning</h1><p>Sandbox route planning on a local obstacle map. No vehicle commands are sent.</p></div><span className="sim-tag"><MapPin size={14} /> SIMULATION ONLY</span></div>
-    <div className="safety-banner"><LockKeyhole size={18} /><div><strong>Real autonomous navigation is disabled</strong><span>This planner is a 2D local simulation and is not connected to the flight controller.</span></div></div>
+    <div className="page-title-row"><div><div className="eyebrow">LOCALIZATION / SIMULATION</div><h1>GPS-free path planning</h1><p>{isDemo ? 'Sandbox route planning on a local obstacle map. No vehicle commands are sent.' : 'Path values are synced to the live Firebase database for the current mission context.'}</p></div><span className="sim-tag"><MapPin size={14} /> {isDemo ? 'SIMULATION ONLY' : 'LIVE DB SYNC'}</span></div>
+    <div className="safety-banner"><LockKeyhole size={18} /><div><strong>{isDemo ? 'Real autonomous navigation is disabled' : 'Live planning data is synced to Firebase'}</strong><span>{isDemo ? 'This planner is a 2D local simulation and is not connected to the flight controller.' : 'The target and route data are written to the hardware/database path for the companion and mission layer.'}</span></div></div>
     <div className="planning-layout"><Panel title="Local obstacle map" action={<button className="text-button" onClick={() => { setTarget({ x: 7, z: 6 }); setRecalculated(false) }}>Reset scene <RefreshCw size={13} /></button>}>
       <div className="map-instructions">Click map to place a target. Route automatically skirts obstacles.</div>
       <svg className="planning-map" viewBox={`0 0 ${width} ${width}`} role="button" aria-label="Click to place simulated target" onClick={moveTarget}>
@@ -292,7 +328,7 @@ export function PlanningView({ isDemo }) {
         {(() => { const p = toSvg(target); return <g><circle cx={p.x} cy={p.y} r="10" fill="#51c5ff" /><circle cx={p.x} cy={p.y} r="4" fill="#0b111c" /><text x={p.x + 14} y={p.y + 4} fill="#b9c9dc" fontSize="11">TARGET</text></g> })()}
         </svg>
       <div className="map-legend"><span><i className="legend-dot green" /> Start</span><span><i className="legend-dot blue" /> Proposed route</span><span><i className="legend-dot red" /> Obstacle</span></div>
-      </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Simulation limits"><p className="subtle-copy">This example planner uses a local 2D grid and illustrative obstacle avoidance. It does not consume live sensor data or send AUTO MISSION commands.</p><div className="boundary-status"><span>REAL DRONE LINK</span><b>NONE</b></div></Panel></div></div>
+      </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Simulation limits"><p className="subtle-copy">{isDemo ? 'This example planner uses a local 2D grid and illustrative obstacle avoidance. It does not consume live sensor data or send AUTO MISSION commands.' : 'The route is mirrored into the live database and can be consumed by the companion or mission layer after validation.'}</p><div className="boundary-status"><span>REAL DRONE LINK</span><b>{isDemo ? 'NONE' : connection === 'online' ? 'FIREBASE' : 'OFFLINE'}</b></div></Panel></div></div>
   </>
 }
 
