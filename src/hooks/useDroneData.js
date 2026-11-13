@@ -65,19 +65,19 @@ function normaliseUavSensor(raw) {
   const mapRaw = raw.mapping
   const mapping = mapRaw
     ? {
-        points: [
-          {
-            x: mapRaw.x ?? 0,
-            y: mapRaw.y ?? 0,
-            z: mapRaw.z ?? 0,
-            distance: Math.sqrt((mapRaw.x ?? 0) ** 2 + (mapRaw.y ?? 0) ** 2),
-            obstacle: mapRaw.obstacle === true,
-          },
-        ],
-        horizontalAngle: mapRaw.angle ?? null,
-        verticalAngle: null,
-        updatedAt: now,
-      }
+      points: [
+        {
+          x: mapRaw.x ?? 0,
+          y: mapRaw.y ?? 0,
+          z: mapRaw.z ?? 0,
+          distance: Math.sqrt((mapRaw.x ?? 0) ** 2 + (mapRaw.y ?? 0) ** 2),
+          obstacle: mapRaw.obstacle === true,
+        },
+      ],
+      horizontalAngle: mapRaw.angle ?? null,
+      verticalAngle: null,
+      updatedAt: now,
+    }
     : null
 
   return { sensors, mapping }
@@ -88,7 +88,17 @@ export function useDroneData(mode, user) {
   const [liveData, setLiveData] = useState(emptyLiveData)
   const [connection, setConnection] = useState('offline')
   const [firebaseError, setFirebaseError] = useState('')
+  const [, setHeartbeatTick] = useState(0)
   const demo = mode === 'demo'
+
+  // Watchdog timer: ticks every 1000ms so timestamp freshness (isFresh) and data age (formatAge)
+  // are continuously re-evaluated even when no new packets are arriving from Firebase.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setHeartbeatTick((tick) => (tick + 1) % 1_000_000)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (demo) {

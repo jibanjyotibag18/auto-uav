@@ -128,15 +128,17 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
   const telemetry = data.telemetry
   const sensors = data.sensors
   const mapping = data.mapping
-  const telemetryFresh = isDemo || isFresh(telemetry?.updatedAt)
-  const fcFresh = isDemo || (connection === 'online' && Boolean(status?.flightController?.connected) && isFresh(status?.updatedAt))
-  const compassHeading = isDemo || (sensors?.hmc5883l?.healthy === true && isFresh(sensors?.hmc5883l?.updatedAt))
+  const telemetryFresh = isDemo || isFresh(telemetry?.updatedAt, 3500)
+  const fcFresh = isDemo || (connection === 'online' && Boolean(status?.flightController?.connected) && isFresh(status?.updatedAt, 3500))
+  const compassFresh = isDemo || (sensors?.hmc5883l?.healthy === true && isFresh(sensors?.hmc5883l?.updatedAt, 3500))
+  const compassHeading = compassFresh
     ? sensors?.hmc5883l?.heading
-    : telemetryFresh ? telemetry?.heading : 225
+    : telemetryFresh ? telemetry?.heading : (isDemo ? 225 : null)
 
-  const fcOnline = connection === 'online' && status?.flightController?.connected && isFresh(status?.updatedAt)
-  const companionOnline = connection === 'online' && status?.companion?.connected && isFresh(status?.updatedAt)
-  const esp32Online = isDemo || (connection === 'online' && isFresh(sensors?.updatedAt))
+  const fcOnline = connection === 'online' && status?.flightController?.connected && isFresh(status?.updatedAt, 3500)
+  const companionOnline = connection === 'online' && status?.companion?.connected && isFresh(status?.updatedAt, 3500)
+  const esp32Online = isDemo || (connection === 'online' && (isFresh(sensors?.updatedAt, 3500) || isFresh(status?.esp32SensorHub?.updatedAt, 3500)))
+  const hardwareOnline = isDemo || esp32Online || companionOnline || fcOnline
 
   const [selectedMetric, setSelectedMetric] = useState('lidar')
   const [liveHistory, setLiveHistory] = useState(() => {
@@ -182,48 +184,62 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
         <p>Live UAV perception, sensor telemetry stream, and obstacle detection.</p>
       </div>
       <div className="dashboard-title-right">
-        <StatusPill online={isDemo || esp32Online || connection === 'online'}>
-          {isDemo ? 'DEMO SIMULATOR' : esp32Online ? 'ESP32 SENSOR HUB ONLINE' : connection === 'online' ? 'FIREBASE ONLINE' : 'HARDWARE OFFLINE'}
-        </StatusPill>
+          <StatusPill online={hardwareOnline}>
+            {isDemo ? 'DEMO SIMULATOR' : hardwareOnline ? 'HARDWARE ONLINE' : connection === 'online' ? 'HARDWARE OFFLINE' : 'DISCONNECTED'}
+          </StatusPill>
       </div>
     </div>
 
     {/* Realtime Stream Ticker Bar */}
     <div className="realtime-ticker-bar">
       <div className="ticker-chip">
-        <span className="ticker-icon"><span className="live-blink-dot" /></span>
+        <span className="ticker-icon">
+          {hardwareOnline ? <span className="live-blink-dot" /> : <span className="offline-dot" />}
+        </span>
         <span className="ticker-label">STREAM:</span>
-        <b className="ticker-value tone-green">LIVE</b>
+        <b className={`ticker-value ${hardwareOnline ? 'tone-green' : 'tone-red'}`}>
+          {hardwareOnline ? 'LIVE' : 'OFFLINE'}
+        </b>
       </div>
 
       <div className="ticker-chip">
-        <span className="ticker-icon"><Cpu size={13} className="tone-blue" /></span>
+        <span className="ticker-icon"><Cpu size={13} className={hardwareOnline ? 'tone-blue' : 'tone-muted'} /></span>
         <span className="ticker-label">NODE:</span>
-        <b className="ticker-value">ESP32 HUB</b>
+        <b className={`ticker-value ${hardwareOnline ? '' : 'tone-red'}`}>
+          {hardwareOnline ? 'ESP32 HUB' : 'OFFLINE'}
+        </b>
       </div>
 
       <div className="ticker-chip">
-        <span className="ticker-icon"><Activity size={13} className="tone-green" /></span>
+        <span className="ticker-icon"><Activity size={13} className={hardwareOnline ? 'tone-green' : 'tone-muted'} /></span>
         <span className="ticker-label">RATE:</span>
-        <b className="ticker-value">~5 Hz</b>
+        <b className={`ticker-value ${hardwareOnline ? '' : 'tone-muted'}`}>
+          {hardwareOnline ? '~5 Hz' : '0 Hz'}
+        </b>
       </div>
 
       <div className="ticker-chip">
-        <span className="ticker-icon"><Signal size={13} className="tone-yellow" /></span>
+        <span className="ticker-icon"><Signal size={13} className={hardwareOnline ? 'tone-yellow' : 'tone-muted'} /></span>
         <span className="ticker-label">UPTIME:</span>
-        <b className="ticker-value">{formatUptime(sensors?.uptime || 488283)}</b>
+        <b className={`ticker-value ${hardwareOnline ? '' : 'tone-muted'}`}>
+          {hardwareOnline ? formatUptime(sensors?.uptime || 488283) : '--'}
+        </b>
       </div>
 
       <div className="ticker-chip">
-        <span className="ticker-icon"><Navigation size={13} className="tone-blue" /></span>
+        <span className="ticker-icon"><Navigation size={13} className={hardwareOnline ? 'tone-blue' : 'tone-muted'} /></span>
         <span className="ticker-label">BEARING:</span>
-        <b className="ticker-value">{valueOrDash(compassHeading, 1)}° {getCardinalDirection(compassHeading)}</b>
+        <b className={`ticker-value ${hardwareOnline ? '' : 'tone-muted'}`}>
+          {hardwareOnline && compassHeading !== null ? `${valueOrDash(compassHeading, 1)}° ${getCardinalDirection(compassHeading)}` : '--'}
+        </b>
       </div>
 
       <div className="ticker-chip">
-        <span className="ticker-icon"><Radio size={13} className="tone-cyan" /></span>
+        <span className="ticker-icon"><Radio size={13} className={hardwareOnline ? 'tone-cyan' : 'tone-red'} /></span>
         <span className="ticker-label">PACKET:</span>
-        <b className="ticker-value tone-cyan">{formatAge(sensors?.updatedAt || telemetry?.updatedAt)}</b>
+        <b className={`ticker-value ${hardwareOnline ? 'tone-cyan' : 'tone-red'}`}>
+          {hardwareOnline ? 'Just now' : (sensors?.updatedAt ? formatAge(sensors.updatedAt) : 'No packets')}
+        </b>
       </div>
     </div>
 
@@ -233,24 +249,26 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
       <div className="metric-card metric-card-elevated">
         <div className="metric-top">
           <span className="metric-tag">TF-LUNA LIDAR</span>
-          <span className="metric-badge-ok">ACTIVE</span>
+          <span className={`metric-badge-${esp32Online ? 'ok' : 'warn'}`}>
+            {esp32Online ? 'ACTIVE' : 'OFFLINE'}
+          </span>
         </div>
         <div className="metric-value">
-          {valueOrDash(lidarDist, 2)}
+          {valueOrDash(esp32Online ? lidarDist : null, 2)}
           <small>m</small>
         </div>
         <div className="metric-sub-bar">
           <div className="metric-sub-item">
             <span>Signal:</span>
-            <b>{lidarStrength} pts</b>
+            <b>{esp32Online ? `${lidarStrength} pts` : '--'}</b>
           </div>
           <div className="metric-sub-item">
             <span>Optics:</span>
-            <b>{lidarTemp} °C</b>
+            <b>{esp32Online ? `${lidarTemp} °C` : '--'}</b>
           </div>
         </div>
         <div className="metric-progress-track">
-          <div className="metric-progress-fill fill-blue" style={{ width: `${Math.min(100, (lidarStrength / 4000) * 100)}%` }} />
+          <div className="metric-progress-fill fill-blue" style={{ width: esp32Online ? `${Math.min(100, (lidarStrength / 4000) * 100)}%` : '0%' }} />
         </div>
       </div>
 
@@ -258,26 +276,26 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
       <div className="metric-card metric-card-elevated">
         <div className="metric-top">
           <span className="metric-tag">VL53L0X TOF</span>
-          <span className={`metric-badge-${tofDistMm < 100 ? 'warn' : 'ok'}`}>
-            {tofDistMm < 100 ? 'PROXIMITY' : 'CLEAR'}
-          </span>
+            <span className={`metric-badge-${esp32Online ? (tofDistMm < 100 ? 'warn' : 'ok') : 'warn'}`}>
+              {esp32Online ? (tofDistMm < 100 ? 'PROXIMITY' : 'CLEAR') : 'OFFLINE'}
+            </span>
         </div>
         <div className="metric-value">
-          {valueOrDash(tofDistMm, 0)}
+          {valueOrDash(esp32Online ? tofDistMm : null, 0)}
           <small>mm</small>
         </div>
         <div className="metric-sub-bar">
           <div className="metric-sub-item">
             <span>Range:</span>
-            <b>{(tofDistMm / 10).toFixed(1)} cm</b>
+            <b>{esp32Online ? `${(tofDistMm / 10).toFixed(1)} cm` : '--'}</b>
           </div>
           <div className="metric-sub-item">
             <span>Health:</span>
-            <b className="tone-green">HEALTHY</b>
+            <b className={esp32Online ? 'tone-green' : 'tone-red'}>{esp32Online ? 'HEALTHY' : 'OFFLINE'}</b>
           </div>
         </div>
         <div className="metric-progress-track">
-          <div className="metric-progress-fill fill-green" style={{ width: `${Math.min(100, (tofDistMm / 1200) * 100)}%` }} />
+          <div className="metric-progress-fill fill-green" style={{ width: esp32Online ? `${Math.min(100, (tofDistMm / 1200) * 100)}%` : '0%' }} />
         </div>
       </div>
 
@@ -285,24 +303,28 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
       <div className="metric-card metric-card-elevated">
         <div className="metric-top">
           <span className="metric-tag">HMC5883L COMPASS</span>
-          <span className="metric-badge-ok">{getCardinalDirection(compassHeading)}</span>
+          <span className={`metric-badge-${esp32Online && compassHeading !== null ? 'ok' : 'warn'}`}>
+            {esp32Online && compassHeading !== null ? getCardinalDirection(compassHeading) : 'NO SIGNAL'}
+          </span>
         </div>
         <div className="metric-value">
-          {valueOrDash(compassHeading, 1)}
+          {valueOrDash(esp32Online ? compassHeading : null, 1)}
           <small>°</small>
         </div>
         <div className="metric-sub-bar">
           <div className="metric-sub-item">
             <span>Sector:</span>
-            <b>{getCardinalDirection(compassHeading)} Bearing</b>
+            <b>{esp32Online && compassHeading !== null ? `${getCardinalDirection(compassHeading)} Bearing` : '--'}</b>
           </div>
           <div className="metric-sub-item">
             <span>Status:</span>
-            <b className="tone-green">CALIBRATED</b>
+            <b className={esp32Online && compassHeading !== null ? 'tone-green' : 'tone-red'}>
+              {esp32Online && compassHeading !== null ? 'CALIBRATED' : 'OFFLINE'}
+            </b>
           </div>
         </div>
         <div className="metric-progress-track">
-          <div className="metric-progress-fill fill-cyan" style={{ width: `${((Number(compassHeading) || 0) / 360) * 100}%` }} />
+          <div className="metric-progress-fill fill-cyan" style={{ width: esp32Online && compassHeading !== null ? `${((Number(compassHeading) || 0) / 360) * 100}%` : '0%' }} />
         </div>
       </div>
 
@@ -310,24 +332,26 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
       <div className="metric-card metric-card-elevated">
         <div className="metric-top">
           <span className="metric-tag">POWER PACK</span>
-          <span className="metric-badge-ok">4S NOMINAL</span>
+          <span className={`metric-badge-${telemetryFresh ? 'ok' : 'warn'}`}>
+            {telemetryFresh ? '4S NOMINAL' : 'NO DATA'}
+          </span>
         </div>
         <div className="metric-value">
-          {valueOrDash(batteryVolt, 2)}
+          {valueOrDash(telemetryFresh ? batteryVolt : null, 2)}
           <small>V</small>
         </div>
         <div className="metric-sub-bar">
           <div className="metric-sub-item">
             <span>Cell Avg:</span>
-            <b>{cellVolt} V/cell</b>
+            <b>{telemetryFresh ? `${cellVolt} V/cell` : '--'}</b>
           </div>
           <div className="metric-sub-item">
             <span>Est:</span>
-            <b className="tone-green">~85%</b>
+            <b className={telemetryFresh ? 'tone-green' : 'tone-muted'}>{telemetryFresh ? '~85%' : '--'}</b>
           </div>
         </div>
         <div className="metric-progress-track">
-          <div className="metric-progress-fill fill-emerald" style={{ width: '85%' }} />
+          <div className="metric-progress-fill fill-emerald" style={{ width: telemetryFresh ? '85%' : '0%' }} />
         </div>
       </div>
     </div>
@@ -339,7 +363,7 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
         title="Tactical Proximity Radar"
         action={<button className="text-button" onClick={() => onNavigate('lidar')}>Open 3D Pointcloud <ArrowUpRight size={14} /></button>}
       >
-        <TacticalRadarWidget mapping={mapping} tfLuna={sensors?.tfLuna} gy53={sensors?.gy53} />
+        <TacticalRadarWidget mapping={mapping} tfLuna={sensors?.tfLuna} gy53={sensors?.gy53} isOnline={esp32Online} />
       </Panel>
 
       {/* 2. Compass & Attitude HUD */}
@@ -347,7 +371,7 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
         title="Aerospace Heading & Attitude HUD"
         action={<span className="panel-meta">HMC5883L + IMU</span>}
       >
-        <CompassHudWidget heading={compassHeading} telemetry={telemetry} />
+        <CompassHudWidget heading={compassHeading} telemetry={telemetry} isOnline={esp32Online} />
       </Panel>
 
       {/* 3. Rolling Realtime Telemetry Chart */}
@@ -362,7 +386,7 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
           </div>
         }
       >
-        <RollingStreamChart history={liveHistory} metric={selectedMetric} />
+        <RollingStreamChart history={liveHistory} metric={selectedMetric} isOnline={hardwareOnline} />
       </Panel>
 
       {/* 4. Subsystem Hardware & Bus Diagnostics */}
@@ -373,74 +397,80 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
         <div className="subsystems-grid">
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Cpu size={15} className="tone-blue" />
+              <Cpu size={15} className={esp32Online ? 'tone-blue' : 'tone-muted'} />
               <div>
                 <strong>ESP32 Sensor Gateway</strong>
-                <span>UAV_SENSOR feed · {formatUptime(sensors?.uptime || 488283)} uptime</span>
+                <span>UAV_SENSOR feed · {esp32Online ? `${formatUptime(sensors?.uptime || 488283)} uptime` : 'No incoming packets'}</span>
               </div>
             </div>
-            <StatusPill online={isDemo || esp32Online}>
-              {isDemo ? 'SIMULATED' : esp32Online ? 'BROADCASTING' : 'OFFLINE'}
-            </StatusPill>
+              <StatusPill online={esp32Online}>
+                {isDemo ? 'SIMULATED' : esp32Online ? 'BROADCASTING' : 'OFFLINE'}
+              </StatusPill>
           </div>
 
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Crosshair size={15} className="tone-yellow" />
+              <Crosshair size={15} className={esp32Online ? 'tone-yellow' : 'tone-muted'} />
               <div>
                 <strong>TF-Luna LiDAR (Forward Range)</strong>
-                <span>170 cm · Signal strength: {lidarStrength} pts</span>
+                <span>{esp32Online ? `170 cm · Signal: ${lidarStrength} pts` : 'Hardware stream paused'}</span>
               </div>
             </div>
-            <span className="health-tag tag-green">HEALTHY</span>
+            <span className={`health-tag ${esp32Online ? 'tag-green' : 'tag-red'}`}>
+              {esp32Online ? 'HEALTHY' : 'OFFLINE'}
+            </span>
           </div>
 
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Eye size={15} className="tone-green" />
+              <Eye size={15} className={esp32Online ? 'tone-green' : 'tone-muted'} />
               <div>
                 <strong>VL53L0X Laser ToF (Proximity)</strong>
-                <span>{tofDistMm} mm · Short range laser</span>
+                <span>{esp32Online ? `${tofDistMm} mm · Short range laser` : 'Hardware stream paused'}</span>
               </div>
             </div>
-            <span className="health-tag tag-green">OPERATIONAL</span>
+            <span className={`health-tag ${esp32Online ? 'tag-green' : 'tag-red'}`}>
+              {esp32Online ? 'OPERATIONAL' : 'OFFLINE'}
+            </span>
           </div>
 
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Compass size={15} className="tone-cyan" />
+              <Compass size={15} className={esp32Online ? 'tone-cyan' : 'tone-muted'} />
               <div>
                 <strong>HMC5883L 3-Axis Compass</strong>
-                <span>{valueOrDash(compassHeading, 1)}° · {getCardinalDirection(compassHeading)}</span>
+                <span>{esp32Online && compassHeading !== null ? `${valueOrDash(compassHeading, 1)}° · ${getCardinalDirection(compassHeading)}` : 'No heading packet'}</span>
               </div>
             </div>
-            <span className="health-tag tag-green">LOCKED</span>
+            <span className={`health-tag ${esp32Online ? 'tag-green' : 'tag-red'}`}>
+              {esp32Online ? 'LOCKED' : 'OFFLINE'}
+            </span>
           </div>
 
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Radio size={15} className="tone-blue" />
+              <Radio size={15} className={companionOnline ? 'tone-blue' : 'tone-muted'} />
               <div>
                 <strong>Companion Computer (Gateway)</strong>
                 <span>CrossFlight protocol link</span>
               </div>
             </div>
-            <StatusPill online={isDemo || companionOnline}>
-              {isDemo ? 'SIMULATED' : companionOnline ? 'CONNECTED' : 'STANDBY'}
-            </StatusPill>
+              <StatusPill online={companionOnline}>
+                {isDemo ? 'SIMULATED' : companionOnline ? 'CONNECTED' : 'STANDBY'}
+              </StatusPill>
           </div>
 
           <div className="subsystem-row">
             <div className="subsystem-info">
-              <Shield size={15} className="tone-green" />
+              <Shield size={15} className={fcOnline ? 'tone-green' : 'tone-muted'} />
               <div>
                 <strong>Flight Controller (CrossFlight)</strong>
-                <span>Mode: {fcFresh ? status?.flightController?.mode || 'ALT HOLD' : 'ALT HOLD'} · {status?.flightController?.armed ? 'ARMED' : 'DISARMED'}</span>
+                <span>Mode: {fcFresh ? status?.flightController?.mode || 'ALT HOLD' : '--'} · {status?.flightController?.armed ? 'ARMED' : 'DISARMED'}</span>
               </div>
             </div>
-            <StatusPill online={isDemo || fcOnline}>
-              {isDemo ? 'SIMULATED' : fcOnline ? 'ONLINE' : 'STANDBY'}
-            </StatusPill>
+              <StatusPill online={fcOnline}>
+                {isDemo ? 'SIMULATED' : fcOnline ? 'ONLINE' : 'STANDBY'}
+              </StatusPill>
           </div>
         </div>
       </Panel>
@@ -736,19 +766,23 @@ function SensorHealth({ name, value, unit, healthy, updatedAt, isDemo }) {
 }
 
 const controlGroups = [
-  { title: 'FLIGHT SAFETY', actions: [
-    { command: 'ARM', label: 'Arm vehicle', detail: 'Request arming from flight controller', tone: 'red', critical: true },
-    { command: 'DISARM', label: 'Disarm vehicle', detail: 'Request disarm from flight controller', tone: 'neutral', critical: true },
-    { command: 'HOLD', label: 'Position hold', detail: 'Request hold mode from flight controller', tone: 'blue', critical: true },
-    { command: 'LAND', label: 'Land', detail: 'Request landing mode from flight controller', tone: 'yellow', critical: true },
-    { command: 'RETURN', label: 'Return to launch', detail: 'Request RTL from flight controller', tone: 'neutral', critical: true },
-  ] },
-  { title: 'PAYLOAD & PERCEPTION', actions: [
-    { command: 'START_SCAN', label: 'Start LiDAR scan', detail: 'Start servo and mapping capture', tone: 'blue' },
-    { command: 'STOP_SCAN', label: 'Stop LiDAR scan', detail: 'Stop mapping capture', tone: 'neutral' },
-    { command: 'CAMERA_ON', label: 'Camera on', detail: 'Enable ESP32-CAM stream', tone: 'blue' },
-    { command: 'CAMERA_OFF', label: 'Camera off', detail: 'Disable ESP32-CAM stream', tone: 'neutral' },
-  ] },
+  {
+    title: 'FLIGHT SAFETY', actions: [
+      { command: 'ARM', label: 'Arm vehicle', detail: 'Request arming from flight controller', tone: 'red', critical: true },
+      { command: 'DISARM', label: 'Disarm vehicle', detail: 'Request disarm from flight controller', tone: 'neutral', critical: true },
+      { command: 'HOLD', label: 'Position hold', detail: 'Request hold mode from flight controller', tone: 'blue', critical: true },
+      { command: 'LAND', label: 'Land', detail: 'Request landing mode from flight controller', tone: 'yellow', critical: true },
+      { command: 'RETURN', label: 'Return to launch', detail: 'Request RTL from flight controller', tone: 'neutral', critical: true },
+    ]
+  },
+  {
+    title: 'PAYLOAD & PERCEPTION', actions: [
+      { command: 'START_SCAN', label: 'Start LiDAR scan', detail: 'Start servo and mapping capture', tone: 'blue' },
+      { command: 'STOP_SCAN', label: 'Stop LiDAR scan', detail: 'Stop mapping capture', tone: 'neutral' },
+      { command: 'CAMERA_ON', label: 'Camera on', detail: 'Enable ESP32-CAM stream', tone: 'blue' },
+      { command: 'CAMERA_OFF', label: 'Camera off', detail: 'Disable ESP32-CAM stream', tone: 'neutral' },
+    ]
+  },
 ]
 
 export function MissionControl({ data, connection, isDemo, user, onCommand, pending }) {
@@ -770,7 +804,7 @@ export function MissionControl({ data, connection, isDemo, user, onCommand, pend
           {pending[action.command] ? <RefreshCw size={15} className="spin" /> : <ArrowUpRight size={15} className="control-arrow" />}
         </button>
       })}</div></Panel>)}
-      <Panel title="Autonomous mission"><button className="control-card control-blue auto-mission-disabled" disabled><span className="control-icon"><RouteIcon /></span><span className="control-copy"><strong>AUTO MISSION — SIMULATION ONLY</strong><small>Unavailable for real hardware by design</small></span><LockKeyhole size={15} /></button><p className="auto-mission-note">Real autonomous navigation remains disabled until localization, flight-controller integration, and safety testing are independently validated.</p></Panel>
+        <Panel title="Autonomous mission"><button className="control-card control-blue auto-mission-disabled" disabled><span className="control-icon"><RouteIcon /></span><span className="control-copy"><strong>AUTO MISSION — SIMULATION ONLY</strong><small>Unavailable for real hardware by design</small></span><LockKeyhole size={15} /></button><p className="auto-mission-note">Real autonomous navigation remains disabled until localization, flight-controller integration, and safety testing are independently validated.</p></Panel>
       </div>
       <Panel title="Autonomy boundary" className="boundary-panel"><div className="boundary-icon"><LockKeyhole size={20} /></div><h3>Autonomous flight disabled</h3><p>Route planning is a local simulation only. No path or AUTO MISSION command can be sent to the vehicle.</p><div className="boundary-status"><span>REAL AUTONOMY</span><b>DISABLED</b></div><div className="boundary-status"><span>FC PROTOCOL</span><b>{flightStatusFresh && protocolReady ? 'VERIFIED' : 'NOT VERIFIED'}</b></div><div className="boundary-status"><span>RC FAILSAFE</span><b className="tone-green">RETAINED</b></div></Panel>
     </div>
@@ -797,10 +831,10 @@ export function CameraView({ camera, isDemo, connection, user, onCameraUrl }) {
     <div className="page-title-row"><div><div className="eyebrow">PERCEPTION / VIDEO</div><h1>Live camera</h1><p>ESP32-CAM MJPEG stream monitor.</p></div><StatusPill online={cameraOnline}>{isDemo ? 'DEMO — NO CAMERA' : cameraOnline ? 'CAMERA ONLINE' : 'CAMERA OFFLINE'}</StatusPill></div>
     <Panel title="Camera feed" action={cameraOnline ? <span className="live-tag"><i /> LIVE</span> : <span className="panel-meta">AWAITING STREAM</span>}>
       <div ref={frameRef} className="camera-frame">{cameraOnline && validUrl ? <img src={streamUrl} alt="ESP32-CAM live MJPEG stream" /> : <div className="camera-empty"><div className="camera-crosshair"><Crosshair size={36} /></div><strong>{isDemo ? 'DEMO MODE · NO CAMERA FEED' : 'Stream unavailable'}</strong><span>{isDemo ? 'Demo sensor values are never presented as camera footage.' : 'Confirm the stream URL and ESP32-CAM connectivity.'}</span></div>}
-      <div className="camera-overlay camera-overlay-top"><span><span className="status-dot" /> {cameraOnline ? 'STREAMING' : 'NO SIGNAL'}</span><span>MJPEG · ESP32-CAM</span></div>
-      {cameraError && <div className="camera-error">{cameraError}</div>}
-      {cameraOnline && validUrl && <button className="fullscreen-link" onClick={async () => { try { if (!frameRef.current?.requestFullscreen) throw new Error('Fullscreen API is not supported by this browser.'); await frameRef.current.requestFullscreen() } catch (error) { setCameraError(`Fullscreen unavailable: ${error.message}`) } }}><Maximize size={15} /> Fullscreen</button>}
-      {cameraOnline && validUrl && <a className="fullscreen-link" href={streamUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open stream</a>}
+        <div className="camera-overlay camera-overlay-top"><span><span className="status-dot" /> {cameraOnline ? 'STREAMING' : 'NO SIGNAL'}</span><span>MJPEG · ESP32-CAM</span></div>
+        {cameraError && <div className="camera-error">{cameraError}</div>}
+        {cameraOnline && validUrl && <button className="fullscreen-link" onClick={async () => { try { if (!frameRef.current?.requestFullscreen) throw new Error('Fullscreen API is not supported by this browser.'); await frameRef.current.requestFullscreen() } catch (error) { setCameraError(`Fullscreen unavailable: ${error.message}`) } }}><Maximize size={15} /> Fullscreen</button>}
+        {cameraOnline && validUrl && <a className="fullscreen-link" href={streamUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} /> Open stream</a>}
       </div>
     </Panel>
     <Panel title="Stream configuration"><form className="inline-form" onSubmit={async (event) => { event.preventDefault(); setFormError(''); try { await onCameraUrl(url); setSaved(true); window.setTimeout(() => setSaved(false), 2500) } catch (error) { setFormError(error.message || 'Unable to save camera URL.') } }}>
@@ -821,8 +855,8 @@ export function LidarView({ data, isDemo, onStartScan, onStopScan, commandReady,
     <div className="lidar-layout"><Panel title="Local point cloud" action={<div className="map-actions"><button className="button button-quiet" onClick={clear}>Clear view</button><button className="button button-quiet" disabled={!commandReady} onClick={onStopScan}>Stop scan</button><button className="button button-primary" disabled={!commandReady} onClick={onStartScan}>Start scan</button></div>}>
       <Suspense fallback={<div className="lidar-canvas canvas-loading">Loading 3D scene…</div>}><LidarScene points={points} clearVersion={clearVersion} /></Suspense><div className="lidar-legend"><span><i className="legend-dot green" /> Surface</span><span><i className="legend-dot red" /> Obstacle</span><span><i className="legend-dot blue" /> Vehicle origin</span><small>Drag to rotate · scroll to zoom · right-drag to pan</small></div>
     </Panel><div className="lidar-side"><Panel title="Scan parameters"><div className="parameter-list"><div><span>POINTS</span><b>{validPointCount.toLocaleString()}</b></div><div><span>HORIZONTAL</span><b>{valueOrDash(data.mapping?.horizontalAngle)}°</b></div><div><span>VERTICAL</span><b>{valueOrDash(data.mapping?.verticalAngle)}°</b></div><div><span>LAST UPDATE</span><b>{formatAge(data.mapping?.updatedAt)}</b></div><div><span>COORDINATE FRAME</span><b>{data.mapping?.coordinateFrame || (isDemo ? 'DEMO LOCAL' : 'UNSPECIFIED')}</b></div></div></Panel>
-      <Panel title="Sensor detail"><p className="subtle-copy">Map points must be published by ESP32 #2 with sensor-local metric coordinates. The viewer does not estimate missing axes.</p><div className="sensor-measurement"><span>TF-Luna range</span><b>{valueOrDash(isDemo || (data.sensors?.tfLuna?.healthy === true && isFresh(data.sensors?.tfLuna?.updatedAt)) ? data.sensors?.tfLuna?.distance : null, 2)} <small>m</small></b></div><div className="sensor-measurement"><span>Scan angle</span><b>{valueOrDash(data.mapping?.horizontalAngle)}° <small>H</small></b></div></Panel>
-    </div></div>
+        <Panel title="Sensor detail"><p className="subtle-copy">Map points must be published by ESP32 #2 with sensor-local metric coordinates. The viewer does not estimate missing axes.</p><div className="sensor-measurement"><span>TF-Luna range</span><b>{valueOrDash(isDemo || (data.sensors?.tfLuna?.healthy === true && isFresh(data.sensors?.tfLuna?.updatedAt)) ? data.sensors?.tfLuna?.distance : null, 2)} <small>m</small></b></div><div className="sensor-measurement"><span>Scan angle</span><b>{valueOrDash(data.mapping?.horizontalAngle)}° <small>H</small></b></div></Panel>
+      </div></div>
   </>
 }
 
@@ -954,7 +988,7 @@ export function PlanningView({ isDemo, data, connection, user, onSavePlan, onSen
         {(() => { const p = toSvg(target); return <g><circle cx={p.x} cy={p.y} r="10" fill="#51c5ff" /><circle cx={p.x} cy={p.y} r="4" fill="#0b111c" /><text x={p.x + 14} y={p.y + 4} fill="#b9c9dc" fontSize="11">TARGET</text></g> })()}
       </svg>
       <div className="map-legend"><span><i className="legend-dot green" /> Start</span><span><i className="legend-dot blue" /> Mission waypoints</span><span><i className="legend-dot red" /> Obstacle</span></div>
-      </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Mission status"><div className="parameter-list"><div><span>STATUS</span><b>{missionLiveStatus}</b></div><div><span>GATEWAY</span><b>{isDemo ? 'SIMULATED' : connection === 'online' ? 'CONNECTED' : 'OFFLINE'}</b></div><div><span>WAYPOINTS</span><b>{waypoints.length}</b></div><div><span>LAST UPDATE</span><b>{formatAge(liveMission?.updatedAt || liveMission?.createdAt)}</b></div></div><button className="button button-primary full-button" disabled={isDemo || !user || connection !== 'online' || missionState === 'sending'} onClick={sendMission}><Radio size={15} /> {missionState === 'sending' ? 'Sending...' : 'Send Mission to Hardware'}</button></Panel><Panel title="Live hardware data"><div className="parameter-list"><div><span>ESP32 #2</span><b>{data?.status?.mappingController?.connected && connection === 'online' ? 'ONLINE' : 'OFFLINE'}</b></div><div><span>LiDAR</span><b>{valueOrDash((data?.sensors?.tfLuna?.healthy === true && isFresh(data?.sensors?.tfLuna?.updatedAt)) ? data?.sensors?.tfLuna?.distance : null, 2)} m</b></div><div><span>MAX RANGE</span><b>{valueOrDash((data?.mapping?.points?.length ? Math.max(...data.mapping.points.map((point) => Number(point.distance || Math.hypot(point.x, point.z)))) : null), 2)} m</b></div><div><span>SCAN ANGLE</span><b>{valueOrDash(data?.mapping?.horizontalAngle)}°</b></div><div><span>MISSION STATE</span><b>{liveMission?.status || 'WAITING'}</b></div></div></Panel></div></div>
+    </Panel><div className="planning-side"><Panel title="Route proposal"><div className="route-summary"><div className="route-count">{path.length}<small> WAYPOINTS</small></div><div className={`route-check ${plan.blocked ? 'tone-red' : ''}`}>{plan.blocked ? <AlertTriangle size={15} /> : <Check size={15} />}{plan.blocked ? 'No safe path' : recalculated ? 'Route recalculated' : 'Route clear'}</div></div><div className="parameter-list"><div><span>START</span><b>(0.0, 0.0) m</b></div><div><span>TARGET</span><b>({target.x.toFixed(1)}, {target.z.toFixed(1)}) m</b></div><div><span>EST. DISTANCE</span><b>{path.reduce((sum, point, index) => index ? sum + Math.hypot(point.x - path[index - 1].x, point.z - path[index - 1].z) : 0, 0).toFixed(1)} m</b></div></div><button className="button button-primary full-button" onClick={() => { setRouteRevision((revision) => revision + 1); setRecalculated(true) }}><RefreshCw size={15} /> Recalculate route</button></Panel><Panel title="Mission status"><div className="parameter-list"><div><span>STATUS</span><b>{missionLiveStatus}</b></div><div><span>GATEWAY</span><b>{isDemo ? 'SIMULATED' : connection === 'online' ? 'CONNECTED' : 'OFFLINE'}</b></div><div><span>WAYPOINTS</span><b>{waypoints.length}</b></div><div><span>LAST UPDATE</span><b>{formatAge(liveMission?.updatedAt || liveMission?.createdAt)}</b></div></div><button className="button button-primary full-button" disabled={isDemo || !user || connection !== 'online' || missionState === 'sending'} onClick={sendMission}><Radio size={15} /> {missionState === 'sending' ? 'Sending...' : 'Send Mission to Hardware'}</button></Panel><Panel title="Live hardware data"><div className="parameter-list"><div><span>ESP32 #2</span><b>{data?.status?.mappingController?.connected && connection === 'online' ? 'ONLINE' : 'OFFLINE'}</b></div><div><span>LiDAR</span><b>{valueOrDash((data?.sensors?.tfLuna?.healthy === true && isFresh(data?.sensors?.tfLuna?.updatedAt)) ? data?.sensors?.tfLuna?.distance : null, 2)} m</b></div><div><span>MAX RANGE</span><b>{valueOrDash((data?.mapping?.points?.length ? Math.max(...data.mapping.points.map((point) => Number(point.distance || Math.hypot(point.x, point.z)))) : null), 2)} m</b></div><div><span>SCAN ANGLE</span><b>{valueOrDash(data?.mapping?.horizontalAngle)}°</b></div><div><span>MISSION STATE</span><b>{liveMission?.status || 'WAITING'}</b></div></div></Panel></div></div>
     <div className="planning-layout" style={{ marginTop: 14 }}><Panel title="Waypoint editor"><form className="inline-form" onSubmit={addWaypoint}><div className="input-row"><input type="text" value={draft.label} onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Waypoint label" /><input type="number" step="0.1" value={draft.x} onChange={(event) => setDraft((current) => ({ ...current, x: event.target.value }))} placeholder="X" /><input type="number" step="0.1" value={draft.z} onChange={(event) => setDraft((current) => ({ ...current, z: event.target.value }))} placeholder="Z" /><input type="number" step="0.1" value={draft.altitude} onChange={(event) => setDraft((current) => ({ ...current, altitude: event.target.value }))} placeholder="Alt" /></div><div className="input-row"><input type="number" step="0.1" value={draft.speed} onChange={(event) => setDraft((current) => ({ ...current, speed: event.target.value }))} placeholder="Speed" /><input type="number" step="1" value={draft.holdSeconds} onChange={(event) => setDraft((current) => ({ ...current, holdSeconds: event.target.value }))} placeholder="Hold (s)" /><button className="button button-primary" type="submit">{editingId ? 'Save waypoint' : 'Add waypoint'}</button></div></form><div className="status-list" style={{ marginTop: 12 }}>{waypoints.map((waypoint, index) => <div className="status-row" key={waypoint.id}><span><MapPin size={15} /> {waypoint.label || `WP${index + 1}`} · ({Number(waypoint.x).toFixed(1)}, {Number(waypoint.z).toFixed(1)}) m</span><div style={{ display: 'flex', gap: 8 }}><button className="text-button" onClick={() => startEditing(waypoint)}>Edit</button><button className="text-button" onClick={() => removeWaypoint(waypoint.id)}>Delete</button></div></div>)}</div></Panel><Panel title="Command history"><div className="status-list"><div className="status-row"><span><Signal size={15} /> Mission queued</span><strong>{missionLiveStatus}</strong></div><div className="status-row"><span><Wifi size={15} /> Delivery</span><strong>{isDemo ? 'SIMULATED' : liveMission?.delivery || 'PENDING'}</strong></div><div className="status-row"><span><Shield size={15} /> Hardware ACK</span><strong>{isDemo ? 'SIMULATED' : liveMission?.ack || 'PENDING'}</strong></div><div className="status-row"><span><Activity size={15} /> Last sync</span><strong>{formatAge(liveMission?.updatedAt || liveMission?.createdAt)}</strong></div></div></Panel></div>
   </>
 }
@@ -1008,7 +1042,7 @@ export function SettingsView({ isDemo, user, firebaseConfigured, onModeChange, o
     <Panel title="Operating mode"><div className="mode-selector"><button className={`mode-option ${isDemo ? 'selected' : ''}`} onClick={() => onModeChange('demo')}><span className="mode-radio" /><div><strong>DEMO SIMULATOR</strong><small>Local-only sample data. No hardware commands are sent.</small></div><span className="mode-badge">SAFE</span></button><button className={`mode-option ${!isDemo ? 'selected' : ''}`} onClick={() => onModeChange('live')}><span className="mode-radio" /><div><strong>LIVE FIREBASE</strong><small>Listen to authenticated Firebase data and send allowed command requests.</small></div><span className="mode-badge mode-live">LIVE</span></button></div></Panel>
     <Panel title="Firebase authentication" action={firebaseConfigured ? <span className="panel-meta">CONFIGURED</span> : <span className="health-label tone-yellow">MISSING ENV CONFIG</span>}>
       {user ? <div className="auth-success"><div className="auth-avatar">{user.email?.slice(0, 1).toUpperCase() || 'U'}</div><div><strong>Signed in</strong><span>{user.email}</span></div><button className="button button-quiet" onClick={onSignOut}>Sign out</button></div>
-      : <form className="auth-form" onSubmit={submit}><div className="auth-intro"><LockKeyhole size={18} /><span>Sign in with a Firebase Authentication email/password account. Account creation is managed in Firebase Console.</span></div><div className="form-grid"><label className="field-label">Email<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label><label className="field-label">Password<input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></label></div>{error && <div className="error-message">{error}</div>}<button className="button button-primary" disabled={!firebaseConfigured || busy}>{busy ? 'Signing in…' : 'Sign in'}</button></form>}
+        : <form className="auth-form" onSubmit={submit}><div className="auth-intro"><LockKeyhole size={18} /><span>Sign in with a Firebase Authentication email/password account. Account creation is managed in Firebase Console.</span></div><div className="form-grid"><label className="field-label">Email<input type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} /></label><label className="field-label">Password<input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} /></label></div>{error && <div className="error-message">{error}</div>}<button className="button button-primary" disabled={!firebaseConfigured || busy}>{busy ? 'Signing in…' : 'Sign in'}</button></form>}
     </Panel>
     <Panel title="Firebase project"><p className="subtle-copy">Set the VITE_FIREBASE_* values in <code>.env.local</code>. Firebase web configuration is project-identifying information, not a service-account credential. Restrict its API key and enforce Authentication + Realtime Database Rules.</p><div className="detail-grid"><div><span>Firebase SDK</span><strong>{firebaseConfigured ? 'Ready' : 'Not configured'}</strong></div><div><span>Realtime Database</span><strong>{firebaseConfigured ? 'Configured by environment' : 'Unavailable'}</strong></div><div><span>Authentication</span><strong>{user ? 'Signed in' : 'Not signed in'}</strong></div><div><span>Live link</span><strong>{isDemo ? 'Not active in demo mode' : connection === 'online' ? 'Connected' : 'Offline'}</strong></div></div></Panel>
   </>

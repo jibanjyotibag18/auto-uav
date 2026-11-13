@@ -245,7 +245,7 @@ export default function App() {
     {mobileNavOpen && <button className="mobile-backdrop" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
     <aside className={`sidebar ${mobileNavOpen ? 'sidebar-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><Cpu size={21} /></div><div><strong>NORTHSTAR</strong><span>UAV GROUND CONTROL</span></div><button className="mobile-close" onClick={() => setMobileNavOpen(false)} aria-label="Close menu"><X size={17} /></button></div>
-      <div className="vehicle-card"><div className="vehicle-avatar"><Activity size={18} /></div><div><strong>CrossFlight · 01</strong><span><i className={`status-dot ${isDemo || connection === 'online' ? '' : 'dot-offline'}`} /> {isDemo ? 'Demo vehicle' : connection === 'online' ? 'Connected to Firebase' : 'Hardware offline'}</span></div><ChevronDown size={14} /></div>
+      <div className="vehicle-card"><div className="vehicle-avatar"><Activity size={18} /></div><div><strong>CrossFlight · 01</strong><span><i className={`status-dot ${isDemo || hardwareHeartbeat ? '' : 'dot-offline'}`} /> {isDemo ? 'Demo vehicle' : hardwareHeartbeat ? 'Hardware online' : 'Hardware offline'}</span></div><ChevronDown size={14} /></div>
       <nav className="side-nav">{navigation.map((item, index) => {
         const Icon = iconMap[item.icon] || Activity
         return <div key={item.id}>
@@ -254,13 +254,13 @@ export default function App() {
         </div>
       })}</nav>
       <div className="sidebar-bottom">
-        <div className={`mode-card ${isDemo ? 'mode-card-demo' : ''}`}><div className="mode-card-top"><span className="mode-indicator" />{isDemo ? 'DEMO MODE' : 'LIVE MODE'}<span className="mode-card-state">{isDemo ? 'SAFE' : connection === 'online' ? 'ONLINE' : 'OFFLINE'}</span></div><p>{isDemo ? 'Simulated data · no hardware link' : user ? 'Authenticated Firebase session' : 'Sign in required for live access'}</p><button onClick={() => selectPage('settings')}>{isDemo ? 'Configure live connection' : user ? 'Session settings' : 'Sign in to Firebase'} <ArrowRightIcon /></button></div>
+        <div className={`mode-card ${isDemo ? 'mode-card-demo' : ''}`}><div className="mode-card-top"><span className="mode-indicator" />{isDemo ? 'DEMO MODE' : 'LIVE MODE'}<span className="mode-card-state">{isDemo ? 'SAFE' : hardwareHeartbeat ? 'ONLINE' : 'OFFLINE'}</span></div><p>{isDemo ? 'Simulated data · no hardware link' : user ? (hardwareHeartbeat ? 'Authenticated & hardware online' : 'Authenticated · hardware offline') : 'Sign in required for live access'}</p><button onClick={() => selectPage('settings')}>{isDemo ? 'Configure live connection' : user ? 'Session settings' : 'Sign in to Firebase'} <ArrowRightIcon /></button></div>
         <div className="sidebar-user">{user ? <><div className="user-initial">{user.email?.slice(0, 1).toUpperCase()}</div><div><strong>{user.email}</strong><span>{isDemo ? 'Signed in · demo mode' : 'Authenticated'}</span></div><button title="Sign out" onClick={() => signOut(auth)}><LogOut size={15} /></button></> : <><div className="user-initial">NS</div><div><strong>{authReady ? 'Local session' : 'Connecting…'}</strong><span>{firebaseConfigured ? 'Authentication available' : 'Firebase not configured'}</span></div></>}</div>
       </div>
     </aside>
     <main className="main-area">
       <header className="topbar"><div className="topbar-left"><button className="menu-toggle" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19} /></button><div className="breadcrumb">NORTHSTAR <span>/</span> {currentPage?.label?.toUpperCase()}</div></div><div className="topbar-right">
-        <div className={`connection-indicator ${isDemo ? 'connection-demo' : connection === 'online' ? 'connection-online' : 'connection-offline'}`}><span className="status-dot" />{isDemo ? 'DEMO' : connection === 'online' ? 'LINK ONLINE' : 'OFFLINE'}</div>
+        <div className={`connection-indicator ${isDemo ? 'connection-demo' : hardwareHeartbeat ? 'connection-online' : 'connection-offline'}`}><span className="status-dot" />{isDemo ? 'DEMO' : hardwareHeartbeat ? 'HARDWARE ONLINE' : connection === 'online' ? 'HW OFFLINE' : 'OFFLINE'}</div>
         <button className={`top-mode-button ${isDemo ? 'top-demo' : ''}`} onClick={() => setMode(isDemo ? 'live' : 'demo')}>{isDemo ? 'SWITCH TO LIVE' : 'SWITCH TO DEMO'}</button>
         <button className="icon-button notification-button" title="System logs" onClick={() => selectPage('logs')}><Bell size={17} />{logs.some((log) => log.type === 'ERROR') && <i />}</button>
       </div></header>

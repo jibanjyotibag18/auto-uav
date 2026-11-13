@@ -57,13 +57,13 @@ export function formatAge(timestamp) {
   return `${Math.floor(seconds / 60)}m ago`
 }
 
-export function isFresh(timestamp, maxAgeMs = 15_000) {
-  const value = Number(timestamp)
-  return Number.isFinite(value) && value > 0 && value <= Date.now() + 5_000 && Date.now() - value <= maxAgeMs
-}
+  export function isFresh(timestamp, maxAgeMs = 3_500) {
+    const value = Number(timestamp)
+    return Number.isFinite(value) && value > 0 && value <= Date.now() + 5_000 && Date.now() - value <= maxAgeMs
+  }
 
-export const demoHistory = Array.from({ length: 24 }, (_, index) => ({
-  time: `${String(index).padStart(2, '0')}:00`,
-  voltage: Number((16.6 - index * 0.035 - Math.sin(index) * 0.08).toFixed(2)),
-  altitude: Number((2.1 + Math.sin(index / 3) * 0.4).toFixed(2)),
-}))
+  export const demoHistory = Array.from({ length: 24 }, (_, index) => ({
+    time: `${String(index).padStart(2, '0')}:00`,
+    voltage: Number((16.6 - index * 0.035 - Math.sin(index) * 0.08).toFixed(2)),
+    altitude: Number((2.1 + Math.sin(index / 3) * 0.4).toFixed(2)),
+  }))
