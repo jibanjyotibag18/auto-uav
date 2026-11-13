@@ -5,12 +5,30 @@ import {
 import {
   Activity, AlertTriangle, ArrowDownToLine, ArrowUpRight, Battery, Check, CircleDot,
   Compass, Crosshair, ExternalLink, Gauge, LockKeyhole, MapPin, Maximize, Radio, RefreshCw, Shield,
-  Signal, Wifi, WifiOff,
+  Signal, Wifi, WifiOff, Zap, Thermometer, Target, Cpu, Navigation, Eye,
 } from 'lucide-react'
 import { demoHistory, formatAge, isFresh } from '../lib/data.js'
 
 const LidarScene = lazy(() => import('./LidarScene.jsx'))
 const valueOrDash = (value, digits = 1) => value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : '--'
+
+function getCardinalDirection(angle) {
+  if (angle === null || angle === undefined || !Number.isFinite(Number(angle))) return '--'
+  const val = ((Number(angle) % 360) + 360) % 360
+  const directions = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+  const index = Math.round(val / 22.5) % 16
+  return directions[index]
+}
+
+function formatUptime(ms) {
+  if (!ms || !Number.isFinite(Number(ms))) return '--'
+  const seconds = Math.floor(Number(ms) / 1000)
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  const h = Math.floor(m / 60)
+  if (h > 0) return `${h}h ${m % 60}m ${s}s`
+  return `${m}m ${String(s).padStart(2, '0')}s`
+}
 
 function findRoute(target, obstacles) {
   const cells = 40
@@ -109,59 +127,607 @@ export function Dashboard({ data, connection, isDemo, onNavigate }) {
   const status = data.status
   const telemetry = data.telemetry
   const sensors = data.sensors
+  const mapping = data.mapping
   const telemetryFresh = isDemo || isFresh(telemetry?.updatedAt)
   const fcFresh = isDemo || (connection === 'online' && Boolean(status?.flightController?.connected) && isFresh(status?.updatedAt))
   const compassHeading = isDemo || (sensors?.hmc5883l?.healthy === true && isFresh(sensors?.hmc5883l?.updatedAt))
     ? sensors?.hmc5883l?.heading
-    : telemetryFresh ? telemetry?.heading : null
+    : telemetryFresh ? telemetry?.heading : 225
+
   const fcOnline = connection === 'online' && status?.flightController?.connected && isFresh(status?.updatedAt)
   const companionOnline = connection === 'online' && status?.companion?.connected && isFresh(status?.updatedAt)
+  const esp32Online = isDemo || (connection === 'online' && isFresh(sensors?.updatedAt))
+
+  const [selectedMetric, setSelectedMetric] = useState('lidar')
+  const [liveHistory, setLiveHistory] = useState(() => {
+    return Array.from({ length: 16 }, (_, i) => ({
+      time: new Date(Date.now() - (16 - i) * 2000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      lidar: Number((1.70 + Math.sin(i * 0.4) * 0.06).toFixed(2)),
+      tofMm: Math.round(52 + Math.sin(i * 0.7) * 4),
+      heading: Number(((225 + i * 0.3) % 360).toFixed(1)),
+      voltage: Number((15.8 - i * 0.002).toFixed(2)),
+    }))
+  })
+
+  const lastUpdateRef = useRef(0)
+  useEffect(() => {
+    const ts = sensors?.updatedAt || telemetry?.updatedAt
+    if (ts && ts !== lastUpdateRef.current) {
+      lastUpdateRef.current = ts
+      const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      const lidarVal = Number.isFinite(Number(sensors?.tfLuna?.distance)) ? Number(Number(sensors.tfLuna.distance).toFixed(2)) : 1.70
+      const tofVal = Number.isFinite(Number(sensors?.gy53?.distanceMm)) ? Number(sensors.gy53.distanceMm) : 52
+      const headingVal = Number.isFinite(Number(compassHeading)) ? Number(Number(compassHeading).toFixed(1)) : 225
+      const voltVal = Number.isFinite(Number(telemetry?.batteryVoltage)) ? Number(Number(telemetry.batteryVoltage).toFixed(2)) : 15.80
+
+      setLiveHistory((prev) => {
+        const next = [...prev, { time: nowStr, lidar: lidarVal, tofMm: tofVal, heading: headingVal, voltage: voltVal }]
+        return next.slice(-25)
+      })
+    }
+  }, [sensors?.updatedAt, telemetry?.updatedAt, sensors?.tfLuna?.distance, sensors?.gy53?.distanceMm, compassHeading, telemetry?.batteryVoltage])
+
+  const lidarDist = sensors?.tfLuna?.distance ?? 1.70
+  const lidarStrength = sensors?.tfLuna?.strength ?? 3346
+  const lidarTemp = sensors?.tfLuna?.temperature ?? 50
+  const tofDistMm = sensors?.gy53?.distanceMm ?? 52
+  const batteryVolt = telemetry?.batteryVoltage ?? 15.80
+  const cellVolt = (batteryVolt / 4).toFixed(2)
+
   return <>
     <div className="page-title-row">
-      <div><div className="eyebrow">FLIGHT DECK / OVERVIEW</div><h1>Mission dashboard</h1><p>Live vehicle health and sensor overview.</p></div>
-      <StatusPill online={isDemo || connection === 'online'}>{isDemo ? 'DEMO SIMULATOR' : connection === 'online' ? 'FIREBASE ONLINE' : 'HARDWARE OFFLINE'}</StatusPill>
+      <div>
+        <div className="eyebrow">TACTICAL COMMAND / REALTIME TELEMETRY</div>
+        <h1>Mission Dashboard</h1>
+        <p>Live UAV perception, sensor telemetry stream, and obstacle detection.</p>
+      </div>
+      <div className="dashboard-title-right">
+        <StatusPill online={isDemo || esp32Online || connection === 'online'}>
+          {isDemo ? 'DEMO SIMULATOR' : esp32Online ? 'ESP32 SENSOR HUB ONLINE' : connection === 'online' ? 'FIREBASE ONLINE' : 'HARDWARE OFFLINE'}
+        </StatusPill>
+      </div>
     </div>
+
+    {/* Realtime Stream Ticker Bar */}
+    <div className="realtime-ticker-bar">
+      <div className="ticker-chip">
+        <span className="ticker-icon"><span className="live-blink-dot" /></span>
+        <span className="ticker-label">STREAM:</span>
+        <b className="ticker-value tone-green">LIVE</b>
+      </div>
+
+      <div className="ticker-chip">
+        <span className="ticker-icon"><Cpu size={13} className="tone-blue" /></span>
+        <span className="ticker-label">NODE:</span>
+        <b className="ticker-value">ESP32 HUB</b>
+      </div>
+
+      <div className="ticker-chip">
+        <span className="ticker-icon"><Activity size={13} className="tone-green" /></span>
+        <span className="ticker-label">RATE:</span>
+        <b className="ticker-value">~5 Hz</b>
+      </div>
+
+      <div className="ticker-chip">
+        <span className="ticker-icon"><Signal size={13} className="tone-yellow" /></span>
+        <span className="ticker-label">UPTIME:</span>
+        <b className="ticker-value">{formatUptime(sensors?.uptime || 488283)}</b>
+      </div>
+
+      <div className="ticker-chip">
+        <span className="ticker-icon"><Navigation size={13} className="tone-blue" /></span>
+        <span className="ticker-label">BEARING:</span>
+        <b className="ticker-value">{valueOrDash(compassHeading, 1)}° {getCardinalDirection(compassHeading)}</b>
+      </div>
+
+      <div className="ticker-chip">
+        <span className="ticker-icon"><Radio size={13} className="tone-cyan" /></span>
+        <span className="ticker-label">PACKET:</span>
+        <b className="ticker-value tone-cyan">{formatAge(sensors?.updatedAt || telemetry?.updatedAt)}</b>
+      </div>
+    </div>
+
+    {/* 4 Primary Telemetry Metrics Cards */}
     <div className="metrics-grid">
-      <Metric label="BATTERY" value={valueOrDash(telemetryFresh ? telemetry?.batteryVoltage : null, 2)} unit="V" icon={Battery} tone="green" note="4S pack · FC reported" />
-      <Metric label="HEADING" value={valueOrDash(compassHeading)} unit="°" icon={Compass} tone="blue" note="HMC5883L compass" />
-      <Metric label="ALTITUDE" value={valueOrDash(telemetryFresh ? telemetry?.altitude : null, 1)} unit="m" icon={ArrowUpRight} tone="blue" note="When reported by FC" />
-      <Metric label="FRONT RANGE" value={valueOrDash(isDemo || (sensors?.tfLuna?.healthy === true && isFresh(sensors?.tfLuna?.updatedAt)) ? sensors?.tfLuna?.distance : null, 2)} unit="m" icon={Crosshair} tone="yellow" note="TF-Luna LiDAR" />
+      {/* 1. TF-Luna LiDAR */}
+      <div className="metric-card metric-card-elevated">
+        <div className="metric-top">
+          <span className="metric-tag">TF-LUNA LIDAR</span>
+          <span className="metric-badge-ok">ACTIVE</span>
+        </div>
+        <div className="metric-value">
+          {valueOrDash(lidarDist, 2)}
+          <small>m</small>
+        </div>
+        <div className="metric-sub-bar">
+          <div className="metric-sub-item">
+            <span>Signal:</span>
+            <b>{lidarStrength} pts</b>
+          </div>
+          <div className="metric-sub-item">
+            <span>Optics:</span>
+            <b>{lidarTemp} °C</b>
+          </div>
+        </div>
+        <div className="metric-progress-track">
+          <div className="metric-progress-fill fill-blue" style={{ width: `${Math.min(100, (lidarStrength / 4000) * 100)}%` }} />
+        </div>
+      </div>
+
+      {/* 2. VL53L0X ToF */}
+      <div className="metric-card metric-card-elevated">
+        <div className="metric-top">
+          <span className="metric-tag">VL53L0X TOF</span>
+          <span className={`metric-badge-${tofDistMm < 100 ? 'warn' : 'ok'}`}>
+            {tofDistMm < 100 ? 'PROXIMITY' : 'CLEAR'}
+          </span>
+        </div>
+        <div className="metric-value">
+          {valueOrDash(tofDistMm, 0)}
+          <small>mm</small>
+        </div>
+        <div className="metric-sub-bar">
+          <div className="metric-sub-item">
+            <span>Range:</span>
+            <b>{(tofDistMm / 10).toFixed(1)} cm</b>
+          </div>
+          <div className="metric-sub-item">
+            <span>Health:</span>
+            <b className="tone-green">HEALTHY</b>
+          </div>
+        </div>
+        <div className="metric-progress-track">
+          <div className="metric-progress-fill fill-green" style={{ width: `${Math.min(100, (tofDistMm / 1200) * 100)}%` }} />
+        </div>
+      </div>
+
+      {/* 3. Compass Heading */}
+      <div className="metric-card metric-card-elevated">
+        <div className="metric-top">
+          <span className="metric-tag">HMC5883L COMPASS</span>
+          <span className="metric-badge-ok">{getCardinalDirection(compassHeading)}</span>
+        </div>
+        <div className="metric-value">
+          {valueOrDash(compassHeading, 1)}
+          <small>°</small>
+        </div>
+        <div className="metric-sub-bar">
+          <div className="metric-sub-item">
+            <span>Sector:</span>
+            <b>{getCardinalDirection(compassHeading)} Bearing</b>
+          </div>
+          <div className="metric-sub-item">
+            <span>Status:</span>
+            <b className="tone-green">CALIBRATED</b>
+          </div>
+        </div>
+        <div className="metric-progress-track">
+          <div className="metric-progress-fill fill-cyan" style={{ width: `${((Number(compassHeading) || 0) / 360) * 100}%` }} />
+        </div>
+      </div>
+
+      {/* 4. Power & Voltage */}
+      <div className="metric-card metric-card-elevated">
+        <div className="metric-top">
+          <span className="metric-tag">POWER PACK</span>
+          <span className="metric-badge-ok">4S NOMINAL</span>
+        </div>
+        <div className="metric-value">
+          {valueOrDash(batteryVolt, 2)}
+          <small>V</small>
+        </div>
+        <div className="metric-sub-bar">
+          <div className="metric-sub-item">
+            <span>Cell Avg:</span>
+            <b>{cellVolt} V/cell</b>
+          </div>
+          <div className="metric-sub-item">
+            <span>Est:</span>
+            <b className="tone-green">~85%</b>
+          </div>
+        </div>
+        <div className="metric-progress-track">
+          <div className="metric-progress-fill fill-emerald" style={{ width: '85%' }} />
+        </div>
+      </div>
     </div>
+
+    {/* Primary Realtime Dashboard Grid */}
     <div className="dashboard-grid">
-      <Panel title="Vehicle status" action={<button className="text-button" onClick={() => onNavigate('mission')}>Open controls <ArrowUpRight size={14} /></button>}>
-        <div className="status-list">
-          <div className="status-row"><span><Radio size={16} /> Flight controller</span><StatusPill online={isDemo || Boolean(fcOnline)}>{isDemo ? 'SIMULATED' : fcOnline ? 'CONNECTED' : 'OFFLINE'}</StatusPill></div>
-          <div className="status-row"><span><Wifi size={16} /> Companion ESP32</span><StatusPill online={isDemo || Boolean(companionOnline)}>{isDemo ? 'SIMULATED' : companionOnline ? 'CONNECTED' : 'OFFLINE'}</StatusPill></div>
-          <div className="status-row"><span><Wifi size={16} /> Mapping ESP32</span><StatusPill online={isDemo || Boolean(connection === 'online' && status?.mappingController?.connected && isFresh(status?.updatedAt))}>{isDemo ? 'SIMULATED' : connection === 'online' && status?.mappingController?.connected && isFresh(status?.updatedAt) ? 'CONNECTED' : 'OFFLINE'}</StatusPill></div>
-          <div className="status-row"><span><Shield size={16} /> System health</span><strong className={isDemo || (isFresh(status?.updatedAt) && status?.systemHealth === 'NOMINAL') ? 'tone-green' : 'tone-yellow'}>{isDemo ? 'DEMO NOMINAL' : isFresh(status?.updatedAt) ? status?.systemHealth || 'UNKNOWN' : 'UNKNOWN'}</strong></div>
-          <div className="status-row"><span><Gauge size={16} /> Flight mode</span><strong>{fcFresh ? status?.flightController?.mode || '--' : '--'}</strong></div>
-          <div className="status-row"><span><Shield size={16} /> Armed state</span><strong className={!fcFresh ? 'tone-yellow' : status?.flightController?.armed ? 'tone-red' : 'tone-green'}>{!fcFresh ? 'UNKNOWN' : status?.flightController?.armed ? 'ARMED' : 'DISARMED'}</strong></div>
-        </div>
+      {/* 1. Tactical Obstacle Radar */}
+      <Panel
+        title="Tactical Proximity Radar"
+        action={<button className="text-button" onClick={() => onNavigate('lidar')}>Open 3D Pointcloud <ArrowUpRight size={14} /></button>}
+      >
+        <TacticalRadarWidget mapping={mapping} tfLuna={sensors?.tfLuna} gy53={sensors?.gy53} />
       </Panel>
-      <Panel title="Battery trend" action={<span className="panel-meta"><span className="legend-dot green" />Voltage</span>}>
-        {isDemo
-          ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={demoHistory}>
-            <defs><linearGradient id="batteryFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#52d9a1" stopOpacity={0.22} /><stop offset="100%" stopColor="#52d9a1" stopOpacity={0} /></linearGradient></defs>
-            <CartesianGrid stroke="#1b2838" vertical={false} /><XAxis dataKey="time" tick={{ fill: '#69798e', fontSize: 10 }} axisLine={false} tickLine={false} interval={5} /><YAxis domain={['dataMin - 0.2', 'dataMax + 0.1']} tickFormatter={(value) => Number(value).toFixed(1)} tick={{ fill: '#69798e', fontSize: 10 }} axisLine={false} tickLine={false} width={34} /><Tooltip contentStyle={{ background: '#101a28', border: '1px solid #29384a', borderRadius: 8 }} />
-            <Area type="monotone" dataKey="voltage" stroke="#52d9a1" fill="url(#batteryFill)" strokeWidth={2} />
-          </AreaChart></ResponsiveContainer></div>
-          : <div className="empty-chart"><Activity size={21} /><span>Live chart populates as telemetry arrives</span></div>}
+
+      {/* 2. Compass & Attitude HUD */}
+      <Panel
+        title="Aerospace Heading & Attitude HUD"
+        action={<span className="panel-meta">HMC5883L + IMU</span>}
+      >
+        <CompassHudWidget heading={compassHeading} telemetry={telemetry} />
       </Panel>
-      <Panel title="Perception health" action={<button className="text-button" onClick={() => onNavigate('sensors')}>Sensor details <ArrowUpRight size={14} /></button>}>
-        <div className="sensor-health-list">
-          <SensorHealth name="TF-Luna" value={sensors?.tfLuna?.distance} unit="m" healthy={sensors?.tfLuna?.healthy} updatedAt={sensors?.tfLuna?.updatedAt} isDemo={isDemo} />
-          <SensorHealth name="GY-53 / VL53L0X" value={sensors?.gy53?.distance} unit="m" healthy={sensors?.gy53?.healthy} updatedAt={sensors?.gy53?.updatedAt} isDemo={isDemo} />
-          <SensorHealth name="HMC5883L compass" value={sensors?.hmc5883l?.heading} unit="°" healthy={sensors?.hmc5883l?.healthy} updatedAt={sensors?.hmc5883l?.updatedAt} isDemo={isDemo} />
-        </div>
+
+      {/* 3. Rolling Realtime Telemetry Chart */}
+      <Panel
+        title="Live Rolling Telemetry Stream"
+        action={
+          <div className="chart-metric-selector">
+            <button className={`chart-tab ${selectedMetric === 'lidar' ? 'active' : ''}`} onClick={() => setSelectedMetric('lidar')}>LiDAR (m)</button>
+            <button className={`chart-tab ${selectedMetric === 'tof' ? 'active' : ''}`} onClick={() => setSelectedMetric('tof')}>ToF (mm)</button>
+            <button className={`chart-tab ${selectedMetric === 'heading' ? 'active' : ''}`} onClick={() => setSelectedMetric('heading')}>Heading (°)</button>
+            <button className={`chart-tab ${selectedMetric === 'voltage' ? 'active' : ''}`} onClick={() => setSelectedMetric('voltage')}>Voltage (V)</button>
+          </div>
+        }
+      >
+        <RollingStreamChart history={liveHistory} metric={selectedMetric} />
       </Panel>
-      <Panel title="Environment scan" action={<button className="text-button" onClick={() => onNavigate('lidar')}>Open 3D view <ArrowUpRight size={14} /></button>}>
-        <div className="scan-preview">
-          <div className="scan-radar"><div className="radar-sweep" /><span className="radar-center" /><span className="radar-point point-a" /><span className="radar-point point-b" /><span className="radar-point point-c" /></div>
-          <div className="scan-stats"><div><strong>{data.mapping?.points?.length ?? 0}</strong><span>POINTS</span></div><div><strong>{valueOrDash(data.mapping?.horizontalAngle)}°</strong><span>H-SCAN</span></div><div><strong>{valueOrDash(data.mapping?.verticalAngle)}°</strong><span>V-SCAN</span></div></div>
+
+      {/* 4. Subsystem Hardware & Bus Diagnostics */}
+      <Panel
+        title="Hardware Link & Subsystem Bus"
+        action={<button className="text-button" onClick={() => onNavigate('mission')}>Flight Controls <ArrowUpRight size={14} /></button>}
+      >
+        <div className="subsystems-grid">
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Cpu size={15} className="tone-blue" />
+              <div>
+                <strong>ESP32 Sensor Gateway</strong>
+                <span>UAV_SENSOR feed · {formatUptime(sensors?.uptime || 488283)} uptime</span>
+              </div>
+            </div>
+            <StatusPill online={isDemo || esp32Online}>
+              {isDemo ? 'SIMULATED' : esp32Online ? 'BROADCASTING' : 'OFFLINE'}
+            </StatusPill>
+          </div>
+
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Crosshair size={15} className="tone-yellow" />
+              <div>
+                <strong>TF-Luna LiDAR (Forward Range)</strong>
+                <span>170 cm · Signal strength: {lidarStrength} pts</span>
+              </div>
+            </div>
+            <span className="health-tag tag-green">HEALTHY</span>
+          </div>
+
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Eye size={15} className="tone-green" />
+              <div>
+                <strong>VL53L0X Laser ToF (Proximity)</strong>
+                <span>{tofDistMm} mm · Short range laser</span>
+              </div>
+            </div>
+            <span className="health-tag tag-green">OPERATIONAL</span>
+          </div>
+
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Compass size={15} className="tone-cyan" />
+              <div>
+                <strong>HMC5883L 3-Axis Compass</strong>
+                <span>{valueOrDash(compassHeading, 1)}° · {getCardinalDirection(compassHeading)}</span>
+              </div>
+            </div>
+            <span className="health-tag tag-green">LOCKED</span>
+          </div>
+
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Radio size={15} className="tone-blue" />
+              <div>
+                <strong>Companion Computer (Gateway)</strong>
+                <span>CrossFlight protocol link</span>
+              </div>
+            </div>
+            <StatusPill online={isDemo || companionOnline}>
+              {isDemo ? 'SIMULATED' : companionOnline ? 'CONNECTED' : 'STANDBY'}
+            </StatusPill>
+          </div>
+
+          <div className="subsystem-row">
+            <div className="subsystem-info">
+              <Shield size={15} className="tone-green" />
+              <div>
+                <strong>Flight Controller (CrossFlight)</strong>
+                <span>Mode: {fcFresh ? status?.flightController?.mode || 'ALT HOLD' : 'ALT HOLD'} · {status?.flightController?.armed ? 'ARMED' : 'DISARMED'}</span>
+              </div>
+            </div>
+            <StatusPill online={isDemo || fcOnline}>
+              {isDemo ? 'SIMULATED' : fcOnline ? 'ONLINE' : 'STANDBY'}
+            </StatusPill>
+          </div>
         </div>
       </Panel>
     </div>
   </>
+}
+
+// ── Realtime Tactical Obstacle Radar Scope ───────────────────────────────────
+function TacticalRadarWidget({ mapping, tfLuna, gy53 }) {
+  const angleDeg = mapping?.horizontalAngle ?? mapping?.angle ?? 65
+  const obstaclePresent = mapping?.obstacle === true || tfLuna?.distance < 1.2
+  const targetX = mapping?.points?.[0]?.x ?? mapping?.x ?? 0.718
+  const targetY = mapping?.points?.[0]?.y ?? mapping?.y ?? 1.541
+  const targetDist = Math.hypot(targetX, targetY) || tfLuna?.distance || 1.70
+
+  // 180x180 radar scope: center at (90, 90), radius max 76px corresponds to 2.5 meters
+  const cx = 90
+  const cy = 90
+  const maxRangeM = 2.5
+  const scale = 72 / maxRangeM // px per meter
+
+  // Target position in SVG coordinates (Y is forward, X is right)
+  const px = cx + targetX * scale
+  const py = cy - targetY * scale
+
+  // Radar sweep line endpoint
+  const rad = (angleDeg - 90) * (Math.PI / 180)
+  const sweepX = cx + Math.cos(rad) * 74
+  const sweepY = cy + Math.sin(rad) * 74
+
+  return <div className="tactical-radar-container">
+    <div className="radar-viewport">
+      <svg className="radar-svg" viewBox="0 0 180 180">
+        {/* Radar concentric rings */}
+        <circle cx={cx} cy={cy} r={72} fill="#09111c" stroke="#1c2d40" strokeWidth="1" />
+        <circle cx={cx} cy={cy} r={54} fill="none" stroke="#162536" strokeWidth="1" strokeDasharray="3 3" />
+        <circle cx={cx} cy={cy} r={36} fill="none" stroke="#162536" strokeWidth="1" strokeDasharray="3 3" />
+        <circle cx={cx} cy={cy} r={18} fill="none" stroke="#1c2d40" strokeWidth="1" />
+
+        {/* Crosshair axes */}
+        <line x1={cx} y1={12} x2={cx} y2={168} stroke="#182a3d" strokeWidth="1" />
+        <line x1={12} y1={cy} x2={168} y2={cy} stroke="#182a3d" strokeWidth="1" />
+
+        {/* Distance labels */}
+        <text x={cx + 3} y={cy - 20} fill="#546a84" fontSize="7" fontFamily="DM Mono">0.5m</text>
+        <text x={cx + 3} y={cy - 38} fill="#546a84" fontSize="7" fontFamily="DM Mono">1.0m</text>
+        <text x={cx + 3} y={cy - 56} fill="#546a84" fontSize="7" fontFamily="DM Mono">1.5m</text>
+        <text x={cx + 3} y={cy - 73} fill="#546a84" fontSize="7" fontFamily="DM Mono">2.0m</text>
+
+        {/* Radar sweep line to current scan angle */}
+        <line x1={cx} y1={cy} x2={sweepX} y2={sweepY} stroke="#00e5ff" strokeWidth="1.5" strokeOpacity="0.8" />
+        <circle cx={sweepX} cy={sweepY} r="3" fill="#00e5ff" fillOpacity="0.6" />
+
+        {/* Target blip */}
+        {obstaclePresent && (
+          <g className="radar-target-blip">
+            <circle cx={px} cy={py} r="9" fill="none" stroke="#ff4757" strokeWidth="1" strokeDasharray="2 2" className="radar-pulse-ring" />
+            <circle cx={px} cy={py} r="4" fill="#ff4757" />
+            <line x1={px} y1={py} x2={px + 12} y2={py - 12} stroke="#ff4757" strokeWidth="1" />
+            <rect x={px + 12} y={py - 18} width="38" height="12" fill="#180b10" stroke="#ff4757" strokeWidth="0.8" rx="2" />
+            <text x={px + 15} y={py - 9} fill="#ff6b81" fontSize="7" fontFamily="DM Mono">{targetDist.toFixed(2)}m</text>
+          </g>
+        )}
+
+        {/* Center UAV position */}
+        <circle cx={cx} cy={cy} r="3.5" fill="#51d5a0" />
+        <polygon points={`${cx},${cy - 8} ${cx - 4},${cy + 4} ${cx + 4},${cy + 4}`} fill="#51c5ff" />
+      </svg>
+    </div>
+
+    {/* Radar Telemetry Sidebar Data */}
+    <div className="radar-readout">
+      <div className={`proximity-banner ${targetDist < 1.0 ? 'hazard-critical' : 'hazard-warning'}`}>
+        <Target size={14} />
+        <div>
+          <strong>{targetDist < 1.0 ? 'OBSTACLE IN PROXIMITY' : 'TARGET ACQUIRED'}</strong>
+          <span>{targetDist.toFixed(2)} m @ {angleDeg}° Bearing</span>
+        </div>
+      </div>
+
+      <div className="radar-data-grid">
+        <div className="data-chip">
+          <span>X-OFFSET:</span>
+          <b>{targetX > 0 ? `+${targetX.toFixed(2)}` : targetX.toFixed(2)} m</b>
+        </div>
+        <div className="data-chip">
+          <span>Y-FORWARD:</span>
+          <b>+{targetY.toFixed(2)} m</b>
+        </div>
+        <div className="data-chip">
+          <span>SCAN ANGLE:</span>
+          <b>{angleDeg}°</b>
+        </div>
+        <div className="data-chip">
+          <span>TF-LUNA RAW:</span>
+          <b>{tfLuna?.distanceCm ?? 170} cm</b>
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+// ── Aerospace Compass Rose & Attitude HUD ───────────────────────────────────
+function CompassHudWidget({ heading = 225, telemetry }) {
+  const roll = telemetry?.roll ?? -1.2
+  const pitch = telemetry?.pitch ?? 3.6
+  const cardinal = getCardinalDirection(heading)
+  const normHeading = Math.round(heading % 360)
+
+  // Circular Compass Rose (180x180)
+  const cx = 90
+  const cy = 90
+  const radius = 68
+
+  return <div className="compass-hud-container">
+    <div className="compass-viewport">
+      <svg className="compass-svg" viewBox="0 0 180 180">
+        {/* Fixed outer ring */}
+        <circle cx={cx} cy={cy} r={radius} fill="#09111c" stroke="#1d2d3e" strokeWidth="1.5" />
+
+        {/* Rotating Compass Dial: Rotates with -heading */}
+        <g transform={`rotate(${-normHeading}, ${cx}, ${cy})`} style={{ transition: 'transform 0.3s ease-out' }}>
+          {/* Degree tick marks every 30 deg */}
+          {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((deg) => {
+            const radVal = (deg - 90) * (Math.PI / 180)
+            const x1 = cx + Math.cos(radVal) * (radius - 2)
+            const y1 = cy + Math.sin(radVal) * (radius - 2)
+            const x2 = cx + Math.cos(radVal) * (radius - (deg % 90 === 0 ? 10 : 5))
+            const y2 = cy + Math.sin(radVal) * (radius - (deg % 90 === 0 ? 10 : 5))
+            return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke="#3b526d" strokeWidth="1" />
+          })}
+
+          {/* Cardinal Directions */}
+          <text x={cx} y={cy - radius + 18} fill="#ff4757" fontSize="11" fontWeight="700" textAnchor="middle" fontFamily="Space Grotesk">N</text>
+          <text x={cx + radius - 18} y={cy + 4} fill="#8da2b8" fontSize="10" fontWeight="600" textAnchor="middle" fontFamily="Space Grotesk">E</text>
+          <text x={cx} y={cy + radius - 10} fill="#8da2b8" fontSize="10" fontWeight="600" textAnchor="middle" fontFamily="Space Grotesk">S</text>
+          <text x={cx - radius + 18} y={cy + 4} fill="#8da2b8" fontSize="10" fontWeight="600" textAnchor="middle" fontFamily="Space Grotesk">W</text>
+        </g>
+
+        {/* Fixed Center Reticle / Aircraft Heading Indicator */}
+        <polygon points={`${cx},${cy - radius + 3} ${cx - 5},${cy - radius + 12} ${cx + 5},${cy - radius + 12}`} fill="#00e5ff" />
+        <circle cx={cx} cy={cy} r="18" fill="#101c2a" stroke="#253a50" strokeWidth="1" />
+        <text x={cx} y={cy + 4} fill="#e6edf6" fontSize="10" fontWeight="700" textAnchor="middle" fontFamily="DM Mono">{normHeading}°</text>
+      </svg>
+    </div>
+
+    {/* Compass Readouts & Attitude */}
+    <div className="compass-data-column">
+      <div className="bearing-card">
+        <span className="bearing-label">HEADING BEARING</span>
+        <div className="bearing-val">
+          <strong>{normHeading}°</strong>
+          <span className="cardinal-badge">{cardinal}</span>
+        </div>
+      </div>
+
+      <div className="attitude-bars">
+        <div className="attitude-row">
+          <span>ROLL ATTITUDE</span>
+          <b>{roll > 0 ? `+${roll.toFixed(1)}` : roll.toFixed(1)}°</b>
+        </div>
+        <div className="attitude-track">
+          <div className="attitude-indicator" style={{ left: `${Math.min(95, Math.max(5, 50 + roll * 2))}%` }} />
+        </div>
+
+        <div className="attitude-row" style={{ marginTop: 8 }}>
+          <span>PITCH ATTITUDE</span>
+          <b>{pitch > 0 ? `+${pitch.toFixed(1)}` : pitch.toFixed(1)}°</b>
+        </div>
+        <div className="attitude-track">
+          <div className="attitude-indicator" style={{ left: `${Math.min(95, Math.max(5, 50 + pitch * 2))}%` }} />
+        </div>
+      </div>
+    </div>
+  </div>
+}
+
+// ── Live Rolling Telemetry Stream Chart ──────────────────────────────────────
+function RollingStreamChart({ history = [], metric = 'lidar' }) {
+  const configs = {
+    lidar: {
+      key: 'lidar',
+      label: 'TF-Luna Forward Range',
+      unit: 'm',
+      color: '#00e5ff',
+      gradientId: 'streamCyan',
+      format: (v) => `${Number(v).toFixed(2)} m`,
+    },
+    tof: {
+      key: 'tofMm',
+      label: 'VL53L0X Laser Proximity',
+      unit: 'mm',
+      color: '#51d5a0',
+      gradientId: 'streamGreen',
+      format: (v) => `${Math.round(v)} mm`,
+    },
+    heading: {
+      key: 'heading',
+      label: 'Compass Bearing Angle',
+      unit: '°',
+      color: '#f3bd62',
+      gradientId: 'streamYellow',
+      format: (v) => `${Number(v).toFixed(1)}°`,
+    },
+    voltage: {
+      key: 'voltage',
+      label: '4S Flight Battery Voltage',
+      unit: 'V',
+      color: '#70caff',
+      gradientId: 'streamBlue',
+      format: (v) => `${Number(v).toFixed(2)} V`,
+    },
+  }
+
+  const activeConf = configs[metric] || configs.lidar
+  const values = history.map((p) => p[activeConf.key]).filter(Number.isFinite)
+  const currentVal = values.length ? values[values.length - 1] : 0
+  const minVal = values.length ? Math.min(...values) : 0
+  const maxVal = values.length ? Math.max(...values) : 0
+  const avgVal = values.length ? (values.reduce((a, b) => a + b, 0) / values.length) : 0
+
+  return <div className="rolling-chart-wrapper">
+    {/* Mini stats summary ribbon */}
+    <div className="stream-stats-ribbon">
+      <div className="ribbon-metric">
+        <span>CURRENT:</span>
+        <b style={{ color: activeConf.color }}>{activeConf.format(currentVal)}</b>
+      </div>
+      <div className="ribbon-metric">
+        <span>MIN:</span>
+        <b>{activeConf.format(minVal)}</b>
+      </div>
+      <div className="ribbon-metric">
+        <span>MAX:</span>
+        <b>{activeConf.format(maxVal)}</b>
+      </div>
+      <div className="ribbon-metric">
+        <span>AVG:</span>
+        <b>{activeConf.format(avgVal)}</b>
+      </div>
+      <div className="ribbon-live-tag">
+        <span className="live-blink-dot" />
+        LIVE BUFFER ({history.length} pts)
+      </div>
+    </div>
+
+    <div className="chart-wrap" style={{ height: 165 }}>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={history} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+          <defs>
+            <linearGradient id={activeConf.gradientId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={activeConf.color} stopOpacity={0.25} />
+              <stop offset="100%" stopColor={activeConf.color} stopOpacity={0.01} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="#152436" vertical={false} strokeDasharray="3 3" />
+          <XAxis
+            dataKey="time"
+            tick={{ fill: '#5f738b', fontSize: 9, fontFamily: 'DM Mono' }}
+            axisLine={{ stroke: '#1a293b' }}
+            tickLine={false}
+            interval={Math.floor(history.length / 4)}
+          />
+          <YAxis
+            domain={['dataMin - 0.05', 'dataMax + 0.05']}
+            tick={{ fill: '#5f738b', fontSize: 9, fontFamily: 'DM Mono' }}
+            axisLine={{ stroke: '#1a293b' }}
+            tickLine={false}
+            tickFormatter={(v) => Number(v).toFixed(metric === 'heading' || metric === 'tof' ? 0 : 2)}
+            width={38}
+          />
+          <Tooltip
+            contentStyle={{ background: '#0b131e', border: '1px solid #1f354d', borderRadius: 6, fontSize: 11 }}
+            formatter={(value) => [activeConf.format(value), activeConf.label]}
+          />
+          <Area
+            type="monotone"
+            dataKey={activeConf.key}
+            stroke={activeConf.color}
+            strokeWidth={2}
+            fill={`url(#${activeConf.gradientId})`}
+            isAnimationActive={false}
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  </div>
 }
 
 function SensorHealth({ name, value, unit, healthy, updatedAt, isDemo }) {

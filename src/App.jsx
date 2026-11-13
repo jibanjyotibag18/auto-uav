@@ -38,7 +38,9 @@ export default function App() {
   const lastTelemetryLog = useRef(0)
   const lastSensorLog = useRef(0)
   const { data, connection, isDemo, firebaseError } = useDroneData(mode, user)
-  const hardwareHeartbeat = data.status?.companion?.connected === true && isFresh(data.status?.updatedAt)
+  const hardwareHeartbeat = (data.status?.companion?.connected === true && isFresh(data.status?.updatedAt)) ||
+    (data.status?.esp32SensorHub?.connected === true && isFresh(data.status?.esp32SensorHub?.updatedAt)) ||
+    (isFresh(data.sensors?.updatedAt))
 
   const notify = useCallback((message, tone = 'info') => {
     setToast({ message, tone })
